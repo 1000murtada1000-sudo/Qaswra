@@ -1,8 +1,65 @@
 package com.example.audio.aivoice
 
 import org.json.JSONObject
+import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
 
 object AiVoicePromptBuilder {
+    private data class AcousticProfileLock(
+        val profileId: String,
+        val speakerId: Int,
+        val seed: Int,
+    )
+
+    private val acousticProfileCache = ConcurrentHashMap<String, AcousticProfileLock>()
+
+    fun lockAcousticProfile(request: AiVoiceSynthRequest): AiVoiceSynthRequest {
+        if (request.acousticProfileId.isNotBlank()) return request
+
+        val profileKey = listOf(
+            request.engine.id,
+            request.voiceCharacterId,
+            request.fixedSid,
+            request.fixedSeed,
+            request.category.id,
+            request.language.code,
+            request.dialect.id,
+            request.englishAccent.id,
+            request.voiceDescriptionPrompt.trim(),
+            request.emotion.id,
+            request.emotionIntensity,
+            request.pace.id,
+            request.speechRate,
+            request.pitchOffsetSemitones,
+            request.fixedFormantShift,
+            request.fixedEqLowDb,
+            request.fixedEqPresenceDb,
+            request.vocalStyle.id,
+            request.breathCadence.id,
+            request.pitchContour.id,
+            request.timbre.id,
+            request.articulationClarity,
+            request.referenceAudioPath.orEmpty(),
+            request.referenceTranscript.trim(),
+        ).joinToString("\u001f")
+        val profile = acousticProfileCache.computeIfAbsent(profileKey) {
+            val digest = MessageDigest.getInstance("SHA-256")
+                .digest(profileKey.toByteArray(Charsets.UTF_8))
+            val profileId = digest.take(12).joinToString("") { byte ->
+                (byte.toInt() and 0xff).toString(16).padStart(2, '0')
+            }
+            AcousticProfileLock(
+                profileId = profileId,
+                speakerId = request.fixedSid,
+                seed = request.fixedSeed,
+            )
+        }
+        return request.copy(
+            fixedSid = profile.speakerId,
+            fixedSeed = profile.seed,
+            acousticProfileId = profile.profileId,
+        )
+    }
 
     fun normalizeTargetText(text: String, language: AiVoiceLanguage, dialect: AiArabicDialect): String {
         val cleanText = text
@@ -70,7 +127,7 @@ object AiVoicePromptBuilder {
         )
         parts.add("at ${request.pace.promptHintEn} (rate=${"%.2f".format(java.util.Locale.US, request.speechRate)}x)")
         parts.add(
-            "Keep one consistent voice identity (speaker ${request.fixedSid}, seed ${request.fixedSeed}); " +
+            "Keep the same acoustic voice identity across all chunks and text edits; " +
                 "do not change the speaker's age, accent, or timbre.",
         )
 
@@ -90,38 +147,41 @@ object AiVoicePromptBuilder {
         textChunk: String,
         referenceAudioBase64: String? = null,
     ): JSONObject {
-        val voxInstruction = buildVoxCpmInstruction(request)
-        val processedText = normalizeTargetText(textChunk, request.language, request.dialect)
+        val profileRequest = lockAcousticProfile(request)
+        val hasReferenceAudio = !referenceAudioBase64.isNullOrBlank()
+        val voxInstruction = if (hasReferenceAudio) "" else buildVoxCpmInstruction(profileRequest)
+        val processedText = normalizeTargetText(textChunk, profileRequest.language, profileRequest.dialect)
 
         return JSONObject().apply {
-            put("engine", request.engine.id)
-            put("model_repo", request.engine.modelRepoId)
+            put("engine", profileRequest.engine.id)
+            put("model_repo", profileRequest.engine.modelRepoId)
             put("text", processedText)
             put("raw_text", processedText)
-            put("language", request.language.code)
-            put("dialect", request.dialect.id)
-            put("dialect_hint", request.dialect.localeTag)
-            put("english_accent", request.englishAccent.id)
-            put("category", request.category.id)
-            put("voice_mode", if (!referenceAudioBase64.isNullOrBlank()) "clone" else "design")
-            put("voice_description", request.voiceDescriptionPrompt.trim())
+            put("language", profileRequest.language.code)
+            put("dialect", profileRequest.dialect.id)
+            put("dialect_hint", profileRequest.dialect.localeTag)
+            put("english_accent", profileRequest.englishAccent.id)
+            put("category", profileRequest.category.id)
+            put("voice_mode", if (hasReferenceAudio) "clone" else "design")
+            put("voice_description", if (hasReferenceAudio) "" else profileRequest.voiceDescriptionPrompt.trim())
             put("style_instruction", voxInstruction)
-            put("emotion", request.emotion.id)
-            put("emotion_intensity", request.emotionIntensity.toDouble())
-            put("pace", request.pace.id)
-            put("speaking_rate", request.speechRate.toDouble())
-            put("pitch_semitones", request.pitchOffsetSemitones.toDouble())
-            put("seed", request.fixedSeed)
+            put("emotion", profileRequest.emotion.id)
+            put("emotion_intensity", profileRequest.emotionIntensity.toDouble())
+            put("pace", profileRequest.pace.id)
+            put("speaking_rate", profileRequest.speechRate.toDouble())
+            put("pitch_semitones", profileRequest.pitchOffsetSemitones.toDouble())
+            put("seed", profileRequest.fixedSeed)
             put("randomize_seed", false)
-            put("fixed_sid", request.fixedSid)
-            put("speaker_id", request.fixedSid)
-            put("cfg_value", request.cfgValue.toDouble())
-            put("inference_timesteps", request.inferenceTimesteps)
-            put("normalize", request.normalizeAudio)
-            if (!referenceAudioBase64.isNullOrBlank()) {
+            put("fixed_sid", profileRequest.fixedSid)
+            put("speaker_id", profileRequest.fixedSid)
+            put("acoustic_profile_id", profileRequest.acousticProfileId)
+            put("cfg_value", profileRequest.cfgValue.toDouble())
+            put("inference_timesteps", profileRequest.inferenceTimesteps)
+            put("normalize", profileRequest.normalizeAudio)
+            if (hasReferenceAudio) {
                 put("reference_audio_base64", referenceAudioBase64)
-                if (request.referenceTranscript.isNotBlank()) {
-                    put("reference_transcript", request.referenceTranscript.trim())
+                if (profileRequest.referenceTranscript.isNotBlank()) {
+                    put("reference_transcript", profileRequest.referenceTranscript.trim())
                 }
             }
         }

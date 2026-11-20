@@ -45,7 +45,6 @@ import com.example.audio.aivoice.AiDialogueTurn
 import com.example.audio.aivoice.AiPitchContour
 import com.example.audio.aivoice.AiStudioPreset
 import com.example.audio.aivoice.AiVoiceAudioStitcher
-import com.example.audio.aivoice.aiVoiceCloudPackReferenceFile
 import com.example.audio.aivoice.AiVoiceCategory
 import com.example.audio.aivoice.AiVoiceCharacter
 import com.example.audio.aivoice.AiVoiceEmotion
@@ -567,7 +566,6 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     private var cloudDraftsJob: Job? = null
     private var aiVoiceSynthJob: Job? = null
     private var aiVoiceReferenceImportJob: Job? = null
-    private var aiVoiceCloudPackJob: Job? = null
     private var aiVoicePlaybackPollJob: Job? = null
     private var characterVoicePreviewJob: Job? = null
     private var pendingExportResult: ExportedAudioResult? = null
@@ -8008,10 +8006,6 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     fun selectAiVoiceCharacter(character: AiVoiceCharacter) {
         stopAiVoiceOutput()
         AudioPlayerManager.releaseAll()
-        val packedReference = aiVoiceCloudPackReferenceFile(
-            getApplication<Application>(),
-            character.id,
-        ).takeIf { it.isFile && it.length() > 44L }?.absolutePath
         _aiVoiceUiState.update { cur ->
             val targetEngine = cur.selectedEngine
             val safeEmotion = if (character.defaultEmotion in targetEngine.supportedEmotions()) {
@@ -8024,10 +8018,6 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             } else {
                 AiVoiceLanguage.AR
             }
-            val currentReferenceIsPack = isAiVoiceCloudPackReference(cur.referenceAudioPath)
-            val nextReferencePath = character.referenceAudioPath
-                ?: cur.referenceAudioPath?.takeUnless { currentReferenceIsPack }
-                ?: packedReference
             cur.copy(
                 selectedCharacterId = character.id,
                 selectedEngine = targetEngine,
@@ -8051,37 +8041,19 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                 fixedEqLowDb = character.fixedEqLowDb,
                 fixedEqPresenceDb = character.fixedEqPresenceDb,
                 voiceDescriptionPrompt = character.voiceDescriptionPrompt,
-                referenceAudioPath = nextReferencePath,
-                referenceAudioName = character.referenceAudioName
-                    ?: if (nextReferencePath == packedReference && packedReference != null) {
-                        "VoxCPM2 ${character.displayName(isEnglish = false)}"
-                    } else {
-                        cur.referenceAudioName
-                    },
-                referenceTranscript = character.referenceTranscript.ifBlank {
-                    if (nextReferencePath == packedReference && packedReference != null) {
-                        aiVoiceCloudPackSampleText(safeLanguage)
-                    } else {
-                        cur.referenceTranscript
-                    }
-                },
+                referenceAudioPath = null,
+                referenceAudioName = null,
+                referenceAudioDurationMs = 0L,
+                referenceTranscript = "",
+                referenceRightsConfirmed = false,
+                isReferenceImporting = false,
+                referenceImportProgress = null,
+                referenceImportStatus = "",
                 errorTitle = null,
                 errorDetail = null,
                 setupRequiredGuide = null,
             )
         }
-        if (character.referenceAudioPath.isNullOrBlank() && packedReference == null) {
-            prepareAiVoiceCloudPack()
-        }
-    }
-
-    private fun isAiVoiceCloudPackReference(path: String?): Boolean {
-        if (path.isNullOrBlank()) return false
-        val referenceRoot = File(
-            File(getApplication<Application>().filesDir, "ai_voice_cloud_pack"),
-            "references",
-        ).absolutePath + File.separator
-        return File(path).absolutePath.startsWith(referenceRoot)
     }
 
     fun importAiVoiceReferenceFromUri(uri: Uri) {
@@ -8213,7 +8185,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     fun clearAiVoiceReference() {
         aiVoiceReferenceImportJob?.cancel()
         val oldPath = _aiVoiceUiState.value.referenceAudioPath
-        if (!oldPath.isNullOrBlank() && !isAiVoiceCloudPackReference(oldPath)) {
+        if (!oldPath.isNullOrBlank()) {
             val isUsedBySavedChar = _aiVoiceUiState.value.savedCharacters.any { it.referenceAudioPath == oldPath }
             if (!isUsedBySavedChar) {
                 runCatching { File(oldPath).delete() }
@@ -8264,9 +8236,6 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             fixedFormantShift = cur.fixedFormantShift,
             fixedEqLowDb = cur.fixedEqLowDb,
             fixedEqPresenceDb = cur.fixedEqPresenceDb,
-            referenceAudioPath = cur.referenceAudioPath,
-            referenceAudioName = cur.referenceAudioName,
-            referenceTranscript = cur.referenceTranscript.trim(),
             isBuiltIn = false,
             createdAtMs = System.currentTimeMillis(),
         )
@@ -8368,234 +8337,6 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun prepareAiVoiceCloudPack() {
-        if (_aiVoiceUiState.value.isPreparingCloudVoicePack) return
-        if (_aiVoiceUiState.value.isSynthesizing) {
-            postBanner("يرجى انتظار انتهاء توليد الصوت قبل تهيئة الملفات السحابية")
-            return
-        }
-        aiVoiceCloudPackJob?.cancel()
-        aiVoiceCloudPackJob = viewModelScope.launch(safeCoroutineHandler) {
-            val isEnglish = _uiState.value.language == AppLanguage.EN ||
-                _uiState.value.language == AppLanguage.TR
-            _aiVoiceUiState.update {
-                it.copy(
-                    isPreparingCloudVoicePack = true,
-                    cloudVoicePackProgress = 0f,
-                    cloudVoicePackStatus = if (isEnglish) {
-                        "Preparing voice profiles and the selected character reference..."
-                    } else {
-                        "جاري تجهيز ملفات التعريف والمرجع الصوتي للشخصية المحددة..."
-                    },
-                    cloudVoicePackReady = false,
-                )
-            }
-            try {
-                val app = getApplication<Application>()
-                val packDirectory = File(app.filesDir, "ai_voice_cloud_pack").apply { mkdirs() }
-                val current = _aiVoiceUiState.value
-                _aiVoiceUiState.update {
-                    it.copy(
-                        cloudVoicePackProgress = 0.02f,
-                        cloudVoicePackStatus = if (isEnglish) "Checking VoxCPM2 availability..." else "جاري التحقق من توفر VoxCPM2...",
-                    )
-                }
-
-                val health = aiVoiceCoordinator.checkBackendHealth(
-                    context = app,
-                    backendUrl = "",
-                    bearerToken = "",
-                )
-                _aiVoiceUiState.update { it.copy(backendHealth = health) }
-                if (!health.serverReachable) {
-                    throw IllegalStateException(
-                        if (isEnglish) "VoxCPM2 cloud service is unavailable." else "خدمة VoxCPM2 السحابية غير متاحة حالياً.",
-                    )
-                }
-
-                val sampleText = aiVoiceCloudPackSampleText(current.selectedLanguage)
-                val request = AiVoiceSynthRequest(
-                    engine = AiVoiceEngineKind.VOXCPM_2,
-                    text = sampleText,
-                    language = current.selectedLanguage,
-                    dialect = current.selectedDialect,
-                    englishAccent = current.selectedEnglishAccent,
-                    category = current.selectedCategory,
-                    voiceDescriptionPrompt = current.voiceDescriptionPrompt,
-                    emotion = current.selectedEmotion,
-                    emotionIntensity = current.emotionIntensity,
-                    pace = current.selectedPace,
-                    speechRate = current.speechRate,
-                    pitchOffsetSemitones = current.pitchOffsetSemitones,
-                    fixedSid = current.fixedSid,
-                    fixedSeed = current.fixedSeed,
-                    fixedFormantShift = current.fixedFormantShift,
-                    fixedEqLowDb = current.fixedEqLowDb,
-                    fixedEqPresenceDb = current.fixedEqPresenceDb,
-                    vocalStyle = current.selectedVocalStyle,
-                    breathCadence = current.selectedBreathCadence,
-                    pitchContour = current.selectedPitchContour,
-                    timbre = current.selectedTimbre,
-                    articulationClarity = current.articulationClarity,
-                )
-                val outcome = aiVoiceCoordinator.synthesizeSingle(
-                    context = app,
-                    request = request,
-                    backendUrl = "",
-                    outputDir = File(app.cacheDir, "ai_voice_cloud_pack").apply { mkdirs() },
-                    bearerToken = "",
-                ) { progress, status ->
-                    _aiVoiceUiState.update {
-                        it.copy(
-                            cloudVoicePackProgress = if (
-                                status.startsWith("Downloaded ") && !status.contains("/")
-                            ) {
-                                null
-                            } else {
-                                (0.04f + progress.coerceIn(0f, 1f) * 0.84f).coerceIn(0f, 1f)
-                            },
-                            cloudVoicePackStatus = status,
-                        )
-                    }
-                }
-                if (outcome !is AiVoiceSynthOutcome.Success) {
-                    val error = when (outcome) {
-                        is AiVoiceSynthOutcome.Error -> if (isEnglish) outcome.messageEn else outcome.messageAr
-                        is AiVoiceSynthOutcome.ConfigurationRequired ->
-                            if (isEnglish) outcome.explanationEn else outcome.explanationAr
-                        is AiVoiceSynthOutcome.Success -> ""
-                    }
-                    throw IllegalStateException(error)
-                }
-
-                val referenceFile = aiVoiceCloudPackReferenceFile(app, current.selectedCharacterId)
-                val sourceFile = File(outcome.audioFilePath)
-                val partialFile = File(referenceFile.parentFile, "${referenceFile.name}.part")
-                withContext(Dispatchers.IO) {
-                    referenceFile.parentFile?.mkdirs()
-                    try {
-                        val totalBytes = sourceFile.length().coerceAtLeast(1L)
-                        var copiedBytes = 0L
-                        java.io.FileInputStream(sourceFile).use { input ->
-                            java.io.FileOutputStream(partialFile).use { output ->
-                                val buffer = ByteArray(64 * 1024)
-                                while (true) {
-                                    currentCoroutineContext().ensureActive()
-                                    val count = input.read(buffer)
-                                    if (count < 0) break
-                                    output.write(buffer, 0, count)
-                                    copiedBytes += count
-                                    val fraction = (copiedBytes.toFloat() / totalBytes).coerceIn(0f, 1f)
-                                    _aiVoiceUiState.update {
-                                        it.copy(
-                                            cloudVoicePackProgress = 0.88f + fraction * 0.10f,
-                                            cloudVoicePackStatus = if (isEnglish) {
-                                                "Saving selected voice reference (${copiedBytes / 1024} / ${totalBytes / 1024} KB)..."
-                                            } else {
-                                                "جاري حفظ المرجع الصوتي (${copiedBytes / 1024} / ${totalBytes / 1024} كيلوبايت)..."
-                                            },
-                                        )
-                                    }
-                                }
-                                output.fd.sync()
-                            }
-                        }
-                        if (!partialFile.renameTo(referenceFile)) {
-                            partialFile.copyTo(referenceFile, overwrite = true)
-                            if (!partialFile.delete()) {
-                                throw IllegalStateException("Could not remove temporary voice-reference file")
-                            }
-                        }
-                    } catch (e: Exception) {
-                        partialFile.delete()
-                        throw e
-                    }
-                }
-                val profiles = org.json.JSONArray()
-                current.allCharacters.forEach { character ->
-                    val characterReference = aiVoiceCloudPackReferenceFile(app, character.id)
-                    profiles.put(
-                        org.json.JSONObject()
-                            .put("id", character.id)
-                            .put("language", character.language.code)
-                            .put("dialect", character.dialect.id)
-                            .put("category", character.category.id)
-                            .put("speaker_id", character.fixedSid)
-                            .put("seed", character.fixedSeed)
-                            .put("voice_prompt", character.voiceDescriptionPrompt)
-                            .put(
-                                "reference_audio_file",
-                                if (characterReference.isFile) characterReference.absolutePath else org.json.JSONObject.NULL,
-                            ),
-                    )
-                }
-                withContext(Dispatchers.IO) {
-                    File(packDirectory, "voice_profiles.json").writeText(profiles.toString())
-                }
-                _aiVoiceUiState.update {
-                    val shouldAttachReference = it.selectedCharacterId == current.selectedCharacterId &&
-                        (
-                            it.referenceAudioPath.isNullOrBlank() ||
-                                isAiVoiceCloudPackReference(it.referenceAudioPath)
-                            )
-                    it.copy(
-                        referenceAudioPath = if (shouldAttachReference) {
-                            referenceFile.absolutePath
-                        } else {
-                            it.referenceAudioPath
-                        },
-                        referenceAudioName = if (shouldAttachReference) {
-                            "VoxCPM2 ${current.selectedCharacterId}"
-                        } else {
-                            it.referenceAudioName
-                        },
-                        referenceTranscript = if (shouldAttachReference) sampleText else it.referenceTranscript,
-                        isPreparingCloudVoicePack = false,
-                        cloudVoicePackProgress = 1f,
-                        cloudVoicePackStatus = if (isEnglish) {
-                            "Selected voice reference and profiles saved on this device."
-                        } else {
-                            "تم حفظ المرجع الصوتي للشخصية وملفات التعريف على الجهاز."
-                        },
-                        cloudVoicePackReady = true,
-                    )
-                }
-                postBanner(
-                    if (isEnglish) {
-                        "VoxCPM2 reference for the selected character was saved locally."
-                    } else {
-                        "تم حفظ مرجع VoxCPM2 للشخصية المحددة محلياً."
-                    },
-                )
-            } catch (ce: CancellationException) {
-                throw ce
-            } catch (e: Exception) {
-                val message = e.localizedMessage ?: e.javaClass.simpleName
-                _aiVoiceUiState.update {
-                    it.copy(
-                        cloudVoicePackProgress = null,
-                        cloudVoicePackStatus = if (isEnglish) {
-                            "Preparation failed: $message"
-                        } else {
-                            "فشلت التهيئة: $message"
-                        },
-                        cloudVoicePackReady = false,
-                    )
-                }
-                postBanner(if (isEnglish) "Cloud voice preparation failed: $message" else "تعذر تهيئة الأصوات السحابية: $message")
-            } finally {
-                _aiVoiceUiState.update { it.copy(isPreparingCloudVoicePack = false) }
-            }
-        }
-    }
-
-    private fun aiVoiceCloudPackSampleText(language: AiVoiceLanguage): String = when (language) {
-        AiVoiceLanguage.AR -> "مرحبا، هذا اختبار جاهزية الصوت."
-        AiVoiceLanguage.EN -> "Hello, this is a voice readiness check."
-        AiVoiceLanguage.TR -> "Merhaba, bu ses hazırlık kontrolüdür."
-        AiVoiceLanguage.FA -> "سلام، این یک بررسی آمادگی صدا است."
-    }
-
     fun synthesizeAiVoiceSingle(overrideEngine: AiVoiceEngineKind? = null) {
         val cur = _aiVoiceUiState.value
         val engine = overrideEngine ?: cur.selectedEngine
@@ -8610,8 +8351,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         }
         if (
             !cur.referenceAudioPath.isNullOrBlank() &&
-            !cur.referenceRightsConfirmed &&
-            !isAiVoiceCloudPackReference(cur.referenceAudioPath)
+            !cur.referenceRightsConfirmed
         ) {
             _aiVoiceUiState.update {
                 it.copy(
@@ -8638,13 +8378,11 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             }
             val app = getApplication<Application>()
             val outDir = File(app.cacheDir, "ai_voice_outputs").apply { mkdirs() }
-            val packedReference = aiVoiceCloudPackReferenceFile(app, cur.selectedCharacterId)
-                .takeIf { it.isFile }?.absolutePath
-            val referenceAudioPath = cur.referenceAudioPath ?: packedReference
             val req = AiVoiceSynthRequest(
                 engine = engine,
                 text = cur.scriptText.trim(),
                 language = cur.selectedLanguage,
+                voiceCharacterId = cur.selectedCharacterId,
                 dialect = cur.selectedDialect,
                 englishAccent = cur.selectedEnglishAccent,
                 category = cur.selectedCategory,
@@ -8664,9 +8402,6 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                 pitchContour = cur.selectedPitchContour,
                 timbre = cur.selectedTimbre,
                 articulationClarity = cur.articulationClarity,
-                referenceAudioPath = referenceAudioPath,
-                referenceTranscript = cur.referenceTranscript.trim(),
-                referenceAudioOptional = isAiVoiceCloudPackReference(referenceAudioPath),
             )
             val outcome = aiVoiceCoordinator.synthesizeSingle(
                 context = app,

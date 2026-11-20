@@ -1,8 +1,6 @@
 package com.example.ui.screens
 
 import androidx.activity.compose.BackHandler
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -90,14 +88,6 @@ fun AiVoiceStudioScreen(
         },
     )
 
-    val pickReferenceAudioLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument(),
-    ) { uri ->
-        if (uri != null) {
-            viewModel.importAiVoiceReferenceFromUri(uri)
-        }
-    }
-
     var synthesizedSignature by rememberSaveable { mutableStateOf<String?>(null) }
     var advancedSubTab by rememberSaveable { mutableIntStateOf(0) } // 0=Dialogue, 1=Clone & Save
     val isDialogueMode = state.activeTab == 1 && advancedSubTab == 0
@@ -128,9 +118,6 @@ fun AiVoiceStudioScreen(
         append(state.fixedEqPresenceDb).append('|')
         append(state.voiceDescriptionPrompt).append('|')
         append(scriptText).append('|')
-        append(state.referenceAudioPath.orEmpty()).append('|')
-        append(state.referenceTranscript).append('|')
-        append(state.referenceRightsConfirmed).append('|')
         append(state.backendServerUrl).append('|')
         append(
             state.dialogueTurns.joinToString(";") { turn ->
@@ -193,11 +180,6 @@ fun AiVoiceStudioScreen(
         onSelectTimbre = viewModel::setAiVoiceTimbre,
         onArticulationClarityChange = viewModel::setAiArticulationClarity,
         onResetTuning = viewModel::resetAiVoiceTuning,
-        onPickReferenceFile = { pickReferenceAudioLauncher.launch(arrayOf("audio/*")) },
-        onUseStudioBufferAsReference = viewModel::importAiVoiceReferenceFromCurrentBuffer,
-        onClearReference = viewModel::clearAiVoiceReference,
-        onReferenceTranscriptChange = viewModel::setAiVoiceReferenceTranscript,
-        onRightsConfirmedChange = viewModel::setAiVoiceReferenceRightsConfirmed,
         onAddDialogueTurn = { viewModel.addDialogueTurn() },
         onRemoveDialogueTurn = viewModel::removeDialogueTurn,
         onMoveDialogueTurn = viewModel::moveDialogueTurn,
@@ -267,7 +249,6 @@ fun AiVoiceStudioScreen(
             }
         },
         onSelectEnglishAccent = viewModel::setAiVoiceEnglishAccent,
-        onPrepareCloudPack = viewModel::prepareAiVoiceCloudPack,
     )
 }
 
@@ -306,11 +287,6 @@ fun AiVoiceStudioContentLayout(
     onSelectTimbre: (AiVoiceTimbre) -> Unit,
     onArticulationClarityChange: (Float) -> Unit,
     onResetTuning: () -> Unit,
-    onPickReferenceFile: () -> Unit,
-    onUseStudioBufferAsReference: () -> Unit,
-    onClearReference: () -> Unit,
-    onReferenceTranscriptChange: (String) -> Unit,
-    onRightsConfirmedChange: (Boolean) -> Unit,
     onAddDialogueTurn: () -> Unit,
     onRemoveDialogueTurn: (String) -> Unit,
     onMoveDialogueTurn: (String, Int) -> Unit,
@@ -323,7 +299,6 @@ fun AiVoiceStudioContentLayout(
     onSaveBackendUrl: (String) -> Unit = {},
     onSaveBackendToken: (String) -> Unit = {},
     onCheckHealth: (String, String) -> Unit = { _, _ -> },
-    onPrepareCloudPack: () -> Unit = {},
     onPreviewClick: () -> Unit,
     onCancelSynthesis: () -> Unit,
     onApproveClick: () -> Unit,
@@ -405,15 +380,6 @@ fun AiVoiceStudioContentLayout(
                     }
                 }
 
-                if (safeActiveTab == 0) {
-                    AiVoiceGroup1TextCard(
-                        scriptText = state.scriptText,
-                        isEnglish = isEnglish,
-                        onScriptChange = onScriptChange,
-                        onScriptDraftChange = onScriptDraftChange,
-                    )
-                }
-
                 LazyColumn(
                     state = listState,
                     modifier = Modifier
@@ -422,12 +388,13 @@ fun AiVoiceStudioContentLayout(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                     contentPadding = PaddingValues(bottom = 16.dp),
                 ) {
-                    if (!state.cloudVoicePackReady) {
-                        item(key = "cloud_voice_pack_top") {
-                            AiVoiceCloudPackCard(
-                                state = state,
+                    if (safeActiveTab == 0) {
+                        item(key = "studio_text") {
+                            AiVoiceGroup1TextCard(
+                                scriptText = state.scriptText,
                                 isEnglish = isEnglish,
-                                onPrepare = onPrepareCloudPack,
+                                onScriptChange = onScriptChange,
+                                onScriptDraftChange = onScriptDraftChange,
                             )
                         }
                     }
@@ -565,18 +532,11 @@ fun AiVoiceStudioContentLayout(
                                     item(key = "characters_and_cloning") {
                                         AiVoiceCharactersTab(
                                             state = state,
-                                            hasStudioAudio = hasStudioAudio,
                                             isEnglish = isEnglish,
                                             onApplyCharacterToStudio = onApplyCharacterToStudio,
                                             onAddCharacterToDialogue = onAddCharacterToDialogue,
                                             onSaveCurrentAsCharacter = onSaveCustomCharacter,
                                             onDeleteSavedCharacter = onDeleteSavedCharacter,
-                                            onPickReferenceFile = onPickReferenceFile,
-                                            onUseStudioBufferAsReference = onUseStudioBufferAsReference,
-                                            onClearReference = onClearReference,
-                                            onScriptChange = onScriptChange,
-                                            onReferenceTranscriptChange = onReferenceTranscriptChange,
-                                            onRightsConfirmedChange = onRightsConfirmedChange,
                                             onSaveOutputWav = onSaveWav,
                                             onShareOutput = onShare,
                                         )
@@ -594,15 +554,6 @@ fun AiVoiceStudioContentLayout(
                                     }
                                 }
                             }
-                        }
-                    }
-                    if (state.cloudVoicePackReady) {
-                        item(key = "cloud_voice_pack_bottom") {
-                            AiVoiceCloudPackCard(
-                                state = state,
-                                isEnglish = isEnglish,
-                                onPrepare = onPrepareCloudPack,
-                            )
                         }
                     }
                 }

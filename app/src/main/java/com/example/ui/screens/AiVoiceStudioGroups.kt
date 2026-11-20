@@ -95,8 +95,6 @@ import com.example.audio.aivoice.AiVocalStyle
 import com.example.audio.tts.TtsTextLimits
 import com.example.ui.theme.StudioColors
 import com.example.ui.theme.TelemetryTextStyle
-import java.util.Locale
-import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 
 @Composable
@@ -679,7 +677,7 @@ internal fun AiVoiceGroup2VoiceSelectionCard(
                         onValueChange = { voiceSearch = it },
                         placeholder = {
                             Text(
-                                text = if (isEnglish) "Search voice blueprints..." else "ابحث في البصمات الصوتية...",
+                                text = if (isEnglish) "Search voice profiles..." else "ابحث في ملفات الأصوات...",
                                 color = StudioColors.TextMuted,
                             )
                         },
@@ -701,13 +699,13 @@ internal fun AiVoiceGroup2VoiceSelectionCard(
                         shape = RoundedCornerShape(10.dp),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .testTag("ai_voice_blueprint_search"),
+                            .testTag("ai_voice_profile_search"),
                     )
                     Text(
                         text = if (isEnglish) {
-                            "1,018 deterministic blueprints • search to browse more"
+                            "Choose a profile, then refine its style and emotion below."
                         } else {
-                            "١٬٠١٨ بصمة ثابتة • ابحث لاستعراض المزيد"
+                            "اختر بصمة ثم خصّص أسلوبها ونبرتها أدناه."
                         },
                         style = MaterialTheme.typography.labelSmall,
                         color = StudioColors.TextSecondary,
@@ -776,84 +774,6 @@ internal fun AiVoiceGroup2VoiceSelectionCard(
                         }
                     }
                 }
-            }
-        }
-    }
-}
-
-@Composable
-internal fun AiVoiceCloudPackCard(
-    state: AiVoiceStudioUiState,
-    isEnglish: Boolean,
-    onPrepare: () -> Unit,
-) {
-    Card(
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = StudioColors.CardSurface),
-        border = BorderStroke(1.dp, StudioColors.Border),
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag("ai_voice_cloud_pack_card"),
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Text(
-                text = if (isEnglish) {
-                    "Downloads a generated reference for the selected character and saves it with the voice profiles on this device. VoxCPM2 synthesis still requires internet."
-                } else {
-                    "ينزّل مرجعاً صوتياً مولداً للشخصية المحددة ويحفظه مع ملفات التعريف على الجهاز. يظل التوليد عبر VoxCPM2 بحاجة إلى الإنترنت."
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = StudioColors.TextSecondary,
-            )
-            Button(
-                onClick = onPrepare,
-                enabled = !state.isPreparingCloudVoicePack,
-                shape = RoundedCornerShape(10.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .defaultMinSize(minHeight = 48.dp)
-                    .testTag("ai_voice_prepare_cloud_pack_button"),
-            ) {
-                Icon(Icons.Rounded.CloudQueue, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = if (state.isPreparingCloudVoicePack) {
-                        if (isEnglish) "Downloading Voice Reference..." else "جاري تنزيل المرجع الصوتي..."
-                    } else if (isEnglish) {
-                        "Download Cloud Voice Pack"
-                    } else {
-                        "تحميل ملفات الصوت السحابية"
-                    },
-                    maxLines = 2,
-                )
-            }
-
-            if (state.cloudVoicePackProgress != null || state.cloudVoicePackStatus.isNotBlank()) {
-                state.cloudVoicePackProgress?.let { progress ->
-                    LinearProgressIndicator(
-                        progress = { progress.coerceIn(0f, 1f) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(6.dp)
-                            .clip(RoundedCornerShape(3.dp)),
-                        color = if (state.cloudVoicePackReady) StudioColors.Emerald else StudioColors.Cyan,
-                    )
-                    Text(
-                        text = "${(progress.coerceIn(0f, 1f) * 100).roundToInt()}%",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = StudioColors.TextSecondary,
-                    )
-                }
-                Text(
-                    text = state.cloudVoicePackStatus,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (state.cloudVoicePackReady) StudioColors.Emerald else StudioColors.TextSecondary,
-                )
             }
         }
     }
@@ -1128,24 +1048,12 @@ internal fun AiVoiceGroup4ControlsCard(
                 }
             }
 
-            // Slider 1: Speech Rate (سرعة الكلام)
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = if (isEnglish) "Speech Rate" else "سرعة الكلام",
-                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-                        color = StudioColors.TextPrimary,
-                    )
-                    Text(
-                        text = "${String.format(Locale.US, "%.2f", state.speechRate)}x",
-                        style = TelemetryTextStyle,
-                        color = StudioColors.Cyan,
-                    )
-                }
+                Text(
+                    text = if (isEnglish) "Speech Rate" else "سرعة الكلام",
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                    color = StudioColors.TextPrimary,
+                )
                 Slider(
                     value = state.speechRate,
                     onValueChange = onSpeechRateChange,
@@ -1160,22 +1068,11 @@ internal fun AiVoiceGroup4ControlsCard(
             }
 
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = if (isEnglish) "Articulation Clarity" else "وضوح النطق",
-                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-                        color = StudioColors.TextPrimary,
-                    )
-                    Text(
-                        text = "${(state.articulationClarity * 100).roundToInt()}%",
-                        style = TelemetryTextStyle,
-                        color = StudioColors.Cyan,
-                    )
-                }
+                Text(
+                    text = if (isEnglish) "Articulation Clarity" else "وضوح النطق",
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                    color = StudioColors.TextPrimary,
+                )
                 Slider(
                     value = state.articulationClarity,
                     onValueChange = onArticulationClarityChange,
@@ -1189,24 +1086,12 @@ internal fun AiVoiceGroup4ControlsCard(
                 )
             }
 
-            // Slider 2: Emotion Intensity % (قوة التعبير %)
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = if (isEnglish) "Emotion Intensity" else "قوة التعبير %",
-                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-                        color = StudioColors.TextPrimary,
-                    )
-                    Text(
-                        text = "${(state.emotionIntensity * 100).roundToInt()}%",
-                        style = TelemetryTextStyle,
-                        color = StudioColors.Cyan,
-                    )
-                }
+                Text(
+                    text = if (isEnglish) "Emotion Intensity" else "قوة التعبير",
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                    color = StudioColors.TextPrimary,
+                )
                 Slider(
                     value = state.emotionIntensity,
                     onValueChange = onIntensityChange,
@@ -1282,15 +1167,9 @@ internal fun AiVoiceStickyBottomActionBar(
                                 text = state.synthesisStatusLabel,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = StudioColors.Cyan,
-                                maxLines = 1,
+                                maxLines = 2,
                                 overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f),
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                text = "${(state.synthesisProgress.coerceIn(0f, 1f) * 100).roundToInt()}%",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = StudioColors.Cyan,
+                                modifier = Modifier.fillMaxWidth(),
                             )
                         }
                     }

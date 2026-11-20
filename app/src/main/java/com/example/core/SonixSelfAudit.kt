@@ -77,7 +77,7 @@ object SonixSelfAudit {
         checks += SonixAuditCheck(
             name = "voxcpm-deterministic-lock",
             status = if (FIXED_DETERMINISTIC_SEED == 42) SonixAuditStatus.PASS else SonixAuditStatus.FAIL,
-            details = "VoxCPM2 fixed seed is ${FIXED_DETERMINISTIC_SEED}; randomization is disabled in synthesis payloads.",
+            details = "VoxCPM2 deterministic profile settings are active; synthesis randomization is disabled.",
         )
         checks += SonixAuditCheck(
             name = "500-word-limit",

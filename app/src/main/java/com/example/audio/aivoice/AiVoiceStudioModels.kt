@@ -388,6 +388,7 @@ data class AiVoiceSynthRequest(
     val engine: AiVoiceEngineKind,
     val text: String,
     val language: AiVoiceLanguage,
+    val voiceCharacterId: String = "",
     val dialect: AiArabicDialect = AiArabicDialect.MSA,
     val englishAccent: AiEnglishAccent = AiEnglishAccent.AMERICAN,
     val category: AiVoiceCategory,
@@ -413,6 +414,7 @@ data class AiVoiceSynthRequest(
     val inferenceTimesteps: Int = 10,
     val normalizeAudio: Boolean = true,
     val referenceAudioOptional: Boolean = false,
+    val acousticProfileId: String = "",
 )
 
 sealed interface AiVoiceSynthOutcome {
@@ -495,10 +497,6 @@ data class AiVoiceStudioUiState(
     val referenceImportProgress: Float? = null,
     val referenceImportStatus: String = "",
     val isReferenceImporting: Boolean = false,
-    val isPreparingCloudVoicePack: Boolean = false,
-    val cloudVoicePackProgress: Float? = null,
-    val cloudVoicePackStatus: String = "",
-    val cloudVoicePackReady: Boolean = false,
     val isSynthesizing: Boolean = false,
     val synthesisProgress: Float = 0f,
     val synthesisStatusLabel: String = "",
@@ -796,58 +794,8 @@ val BUILT_IN_AI_VOICE_CHARACTERS: List<AiVoiceCharacter> = listOf(
     ),
 )
 
-private val DETERMINISTIC_AI_VOICE_BLUEPRINTS: List<AiVoiceCharacter> = List(1_008) { index ->
-    val category = AiVoiceCategory.entries[index % AiVoiceCategory.entries.size]
-    val language = AiVoiceLanguage.entries[(index / AiVoiceCategory.entries.size) % AiVoiceLanguage.entries.size]
-    val vocalStyle = AiVocalStyle.entries[(index / 16) % AiVocalStyle.entries.size]
-    val emotion = AiVoiceEmotion.entries[(index / 7) % AiVoiceEmotion.entries.size]
-    val timbre = AiVoiceTimbre.entries[(index / 13) % AiVoiceTimbre.entries.size]
-    val dialect = AiArabicDialect.entries[(index / 11) % AiArabicDialect.entries.size]
-    val languageTitleAr = language.titleAr
-    val languageTitleEn = language.titleEn
-    val dialectTitleAr = if (language == AiVoiceLanguage.AR) " • ${dialect.titleAr}" else ""
-    val dialectTitleEn = if (language == AiVoiceLanguage.AR) " • ${dialect.titleEn}" else ""
-    val speakerAr = when (category) {
-        AiVoiceCategory.MALE -> "رجل"
-        AiVoiceCategory.FEMALE -> "امرأة"
-        AiVoiceCategory.CHILD -> "طفل"
-        AiVoiceCategory.OLDER_ADULT -> "كبير بالسن"
-    }
-    val speakerEn = when (category) {
-        AiVoiceCategory.MALE -> "Man"
-        AiVoiceCategory.FEMALE -> "Woman"
-        AiVoiceCategory.CHILD -> "Child"
-        AiVoiceCategory.OLDER_ADULT -> "Older adult"
-    }
-    val dialectPrompt = if (language == AiVoiceLanguage.AR) " ${dialect.promptHintEn}" else ""
-    AiVoiceCharacter(
-        id = "blueprint_${index + 1}",
-        nameAr = "$speakerAr • ${vocalStyle.titleAr} • ${emotion.titleAr} • $languageTitleAr$dialectTitleAr #${index + 1}",
-        nameEn = "$speakerEn • ${vocalStyle.titleEn} • ${emotion.titleEn} • $languageTitleEn$dialectTitleEn #${index + 1}",
-        roleDescriptionAr = "${timbre.titleAr}، ${vocalStyle.titleAr}، ${emotion.titleAr}",
-        roleDescriptionEn = "${timbre.titleEn}, ${vocalStyle.titleEn}, ${emotion.titleEn}",
-        category = category,
-        language = language,
-        dialect = dialect,
-        voiceDescriptionPrompt = "$speakerEn speaking $languageTitleEn$dialectPrompt, " +
-            "${timbre.instructionEn}, ${vocalStyle.instructionEn}, and ${emotion.voxDesignHintEn}.",
-        defaultEmotion = emotion,
-        defaultEmotionIntensity = 0.65f,
-        defaultPace = AiDeliveryPace.entries[index % AiDeliveryPace.entries.size],
-        defaultSpeechRate = AiDeliveryPace.entries[index % AiDeliveryPace.entries.size].speedMultiplier,
-        pitchOffsetSemitones = emotion.pitchBiasSemitones,
-        fixedSid = index % 10,
-        fixedSeed = FIXED_DETERMINISTIC_SEED + index + 1_000,
-        defaultVocalStyle = vocalStyle,
-        defaultTimbre = timbre,
-        defaultBreathCadence = AiBreathCadence.entries[index % AiBreathCadence.entries.size],
-        defaultPitchContour = AiPitchContour.entries[index % AiPitchContour.entries.size],
-        isBuiltIn = true,
-    )
-}
-
 val ALL_BUILT_IN_AI_VOICE_CHARACTERS: List<AiVoiceCharacter> =
-    BUILT_IN_AI_VOICE_CHARACTERS + DETERMINISTIC_AI_VOICE_BLUEPRINTS
+    BUILT_IN_AI_VOICE_CHARACTERS
 
 val DEFAULT_DIALOGUE_TURNS: List<AiDialogueTurn> = listOf(
     AiDialogueTurn(

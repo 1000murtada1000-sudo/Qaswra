@@ -1036,9 +1036,9 @@ fun TextToSpeechStudioScreen(
                                 )
                                 Text(
                                     text = if (lang == AppLanguage.EN) {
-                                        "Internet is required. The public API has no speaker-ID or seed controls, so exact voice locking is not guaranteed."
+                                        "Internet is required. The public service may vary voice output between different text requests."
                                     } else {
-                                        "يتطلب اتصالاً بالإنترنت. لا توفر الخدمة العامة تحكماً بمعرف المتحدث أو البذرة، لذلك لا يمكن ضمان تطابق البصمة الصوتية تماماً."
+                                        "يتطلب اتصالاً بالإنترنت. قد تختلف نتيجة الصوت عبر الخدمة العامة عند تغيير النص."
                                     },
                                     style = MaterialTheme.typography.labelSmall,
                                     color = StudioColors.Cyan,

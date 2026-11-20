@@ -27,6 +27,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -40,6 +42,7 @@ import java.net.SocketTimeoutException
 import java.net.URL
 import java.net.UnknownHostException
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import javax.net.ssl.HttpsURLConnection
 import javax.net.ssl.SSLException
 import kotlin.coroutines.coroutineContext
@@ -66,11 +69,6 @@ interface AiVoiceStudioEngine {
         bearerToken: String = "",
         onProgress: (Float, String) -> Unit = { _, _ -> },
     ): AiVoiceSynthOutcome
-}
-
-internal fun aiVoiceCloudPackReferenceFile(context: Context, characterId: String): File {
-    val safeCharacterId = characterId.replace(Regex("[^A-Za-z0-9._-]"), "_")
-    return File(File(File(context.filesDir, "ai_voice_cloud_pack"), "references"), "$safeCharacterId.wav")
 }
 
 internal object BackendHttpHelper {
@@ -371,10 +369,20 @@ class VoxCpm2CloudProvider : AiVoiceStudioEngine {
         outWavFile: File,
         onProgress: (Float, String) -> Unit,
     ): AiVoiceSynthOutcome {
-        val refB64 = if (request.referenceAudioPath != null) {
-            BackendHttpHelper.encodeFileBase64OrNull(request.referenceAudioPath)
-        } else {
-            null
+        val refB64 = request.referenceAudioPath?.let { path ->
+            BackendHttpHelper.encodeFileBase64OrNull(path)
+                ?: return AiVoiceSynthOutcome.Error(
+                    engine = kind,
+                    messageAr = "تعذر قراءة ملف البصمة الصوتية الثابتة.",
+                    messageEn = "Could not read the stable voice reference.",
+                )
+        }
+        if (refB64.isNullOrBlank() && !request.referenceAudioOptional) {
+            return AiVoiceSynthOutcome.Error(
+                engine = kind,
+                messageAr = "ملف البصمة الصوتية الثابتة غير متوفر.",
+                messageEn = "The stable voice reference is unavailable.",
+            )
         }
         val payload = AiVoicePromptBuilder.buildBackendPayloadJson(request, textChunk, refB64)
         onProgress(0.15f, "جاري إرسال النص والعينة المرجعية إلى VoxCPM2...")
@@ -401,7 +409,7 @@ class VoxCpm2CloudProvider : AiVoiceStudioEngine {
             rawBytes = bytes,
             outWavFile = outWavFile,
             engineUsed = kind,
-            appliedPromptSummary = "${request.emotion.titleAr} • seed=${request.fixedSeed}",
+            appliedPromptSummary = "${request.emotion.titleAr} • ${request.vocalStyle.titleAr}",
         )
     }
 
@@ -450,6 +458,13 @@ class VoxCpm2CloudProvider : AiVoiceStudioEngine {
         val paramsArray = endpointMeta?.optJSONArray("parameters")
         val requestedReferenceFile = request.referenceAudioPath?.takeIf { it.isNotBlank() }?.let(::File)
         val referenceFile = requestedReferenceFile?.takeIf { it.isFile }
+        if (!request.referenceAudioOptional && referenceFile == null) {
+            return AiVoiceSynthOutcome.Error(
+                engine = kind,
+                messageAr = "ملف البصمة الصوتية الثابتة غير متوفر.",
+                messageEn = "The stable voice reference is unavailable.",
+            )
+        }
         val hasReferenceInput = paramsArray?.let { params ->
             (0 until params.length()).any { index ->
                 val parameter = params.optJSONObject(index) ?: return@any false
@@ -481,7 +496,7 @@ class VoxCpm2CloudProvider : AiVoiceStudioEngine {
                 ) { progress ->
                     onProgress(
                         0.10f + progress * 0.25f,
-                        "جاري رفع العينة المرجعية إلى VoxCPM2 (${(progress * 100).toInt()}%)...",
+                        "جاري رفع العينة المرجعية إلى VoxCPM2...",
                     )
                 } ?: return AiVoiceSynthOutcome.Error(
                     engine = kind,
@@ -555,7 +570,7 @@ class VoxCpm2CloudProvider : AiVoiceStudioEngine {
                 sourceFile = downloadedAudio,
                 outWavFile = outWavFile,
                 engineUsed = kind,
-                appliedPromptSummary = "${request.emotion.titleAr} • seed=${request.fixedSeed}",
+                appliedPromptSummary = "${request.emotion.titleAr} • ${request.vocalStyle.titleAr}",
             )
         } catch (ce: CancellationException) {
             throw ce
@@ -613,10 +628,10 @@ class VoxCpm2CloudProvider : AiVoiceStudioEngine {
                             val fraction = (downloadedBytes.toFloat() / contentLength).coerceIn(0f, 1f)
                             onProgress(
                                 0.88f + fraction * 0.10f,
-                                "Downloading VoxCPM2 audio (${downloadedBytes / 1024} / ${contentLength / 1024} KB)...",
+                                "Downloading generated VoxCPM2 audio...",
                             )
                         } else {
-                            onProgress(0.88f, "Downloaded ${downloadedBytes / (1024 * 1024)} MB from VoxCPM2...")
+                            onProgress(0.88f, "Downloading generated VoxCPM2 audio...")
                         }
                     }
                 }
@@ -635,7 +650,7 @@ class VoxCpm2CloudProvider : AiVoiceStudioEngine {
             if (!looksLikeAudio || header.trimStart().startsWith("<") || header.trimStart().startsWith("{")) {
                 throw IOException("VoxCPM2 response is not a valid audio file")
             }
-            onProgress(0.99f, "VoxCPM2 audio downloaded; validating sample rate...")
+            onProgress(0.99f, "VoxCPM2 audio downloaded; validating the audio file...")
         } catch (ce: CancellationException) {
             outputFile.delete()
             throw ce
@@ -725,14 +740,20 @@ class VoxCpm2CloudProvider : AiVoiceStudioEngine {
             val key = "$pName $label"
             val defaultVal = p.opt("parameter_default")
             when {
+                key.contains("use_prompt_text") ||
+                    (key.contains("prompt") && key.contains("text") && defaultVal is Boolean) -> {
+                    arr.put(referenceFileData != null && request.referenceTranscript.isNotBlank())
+                }
                 key.contains("target text") || pName in setOf("text", "text_input", "target_text") -> {
                     arr.put(cleanText)
                 }
                 (key.contains("style") && key.contains("prompt")) ||
                     key.contains("control") || key.contains("instruct") -> {
-                    arr.put(instruction)
+                    arr.put(if (referenceFileData != null) "" else instruction)
                 }
-                key.contains("prompt") && key.contains("text") -> arr.put(request.referenceTranscript.trim())
+                key.contains("prompt") && key.contains("text") -> {
+                    arr.put(if (referenceFileData != null) request.referenceTranscript.trim() else "")
+                }
                 isReferenceAudioParameter(key) -> arr.put(referenceFileData ?: JSONObject.NULL)
                 key.contains("emotion intensity") -> arr.put(request.emotionIntensity.toDouble())
                 key.contains("emotion") -> arr.put(request.emotion.id)
@@ -908,7 +929,7 @@ class SonixLocalStudioEngineProvider : AiVoiceStudioEngine {
                     sampleRate = buf.sampleRate,
                     durationMs = buf.durationMs,
                     engineUsed = kind,
-                    appliedPromptSummary = "VoxCPM2 Cloud • ${request.emotion.titleAr} ${(intensity * 100).toInt()}%",
+                    appliedPromptSummary = "VoxCPM2 Cloud • ${request.emotion.titleAr} • ${request.vocalStyle.titleAr}",
                     isCloudGenerated = true,
                 )
             }
@@ -1090,6 +1111,7 @@ class AiVoiceStudioCoordinator(
     ),
 ) {
     private val registry: Map<AiVoiceEngineKind, AiVoiceStudioEngine> = providers.associateBy { it.kind }
+    private val voiceReferenceLocks = ConcurrentHashMap<String, Mutex>()
 
     fun getProvider(kind: AiVoiceEngineKind): AiVoiceStudioEngine =
         registry[kind] ?: registry.values.first()
@@ -1173,13 +1195,55 @@ class AiVoiceStudioCoordinator(
         }
 
         val effectiveEngine = AiVoiceEngineKind.VOXCPM_2
-        val effectiveRequest = request.copy(
+        val provider = getProvider(effectiveEngine)
+        val profileRequest = AiVoicePromptBuilder.lockAcousticProfile(
+            request.copy(
+                referenceAudioPath = null,
+                referenceTranscript = "",
+                referenceAudioOptional = true,
+                acousticProfileId = "",
+            ),
+        )
+        outputDir.mkdirs()
+        val stableReference = try {
+            ensureStableVoiceReference(
+                context = context,
+                request = profileRequest,
+                provider = provider,
+                backendUrl = backendUrl,
+                outputDir = outputDir,
+                bearerToken = bearerToken,
+                onProgress = onProgress,
+            )
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (e: VoiceReferencePreparationFailure) {
+            return@withContext AiVoiceSynthOutcome.Error(
+                engine = effectiveEngine,
+                messageAr = e.messageAr,
+                messageEn = e.messageEn,
+            )
+        } catch (e: IOException) {
+            return@withContext AiVoiceSynthOutcome.Error(
+                engine = effectiveEngine,
+                messageAr = "تعذر إعداد ملف البصمة الصوتية الثابتة: ${e.localizedMessage ?: "خطأ في الملفات"}",
+                messageEn = "Could not prepare the stable voice reference: ${e.localizedMessage ?: "file error"}",
+            )
+        } catch (e: SecurityException) {
+            return@withContext AiVoiceSynthOutcome.Error(
+                engine = effectiveEngine,
+                messageAr = "لا تتوفر صلاحية حفظ ملف البصمة الصوتية.",
+                messageEn = "Permission to save the stable voice reference was denied.",
+            )
+        }
+        val effectiveRequest = profileRequest.copy(
             engine = effectiveEngine,
             text = clean,
-            fixedSeed = request.fixedSeed,
+            referenceAudioPath = stableReference.path,
+            referenceTranscript = stableReference.transcript,
+            referenceAudioOptional = false,
         )
 
-        outputDir.mkdirs()
         val cacheFile = try {
             stableSynthesisCacheFile(context, effectiveRequest, backendUrl)
         } catch (e: Exception) {
@@ -1193,7 +1257,6 @@ class AiVoiceStudioCoordinator(
         }
 
         val chunks = AiVoicePromptBuilder.splitTextIntoChunks(clean, maxCharsPerChunk = 260)
-        val provider = getProvider(effectiveEngine)
         val tempFiles = mutableListOf<File>()
         val segments = mutableListOf<WavStitchSegment>()
         var lastPrompt = ""
@@ -1203,7 +1266,7 @@ class AiVoiceStudioCoordinator(
             for ((idx, chunk) in chunks.withIndex()) {
                 coroutineContext.ensureActive()
                 val pct = 0.08f + (idx.toFloat() / chunks.size.toFloat()) * 0.78f
-                onProgress(pct, "جاري التوليد عبر VoxCPM2 (${idx + 1}/${chunks.size})...")
+                onProgress(pct, "جاري التوليد عبر VoxCPM2...")
                 val chunkFile = File(outputDir, "aivoice_chunk_${UUID.randomUUID()}.wav")
                 tempFiles.add(chunkFile)
 
@@ -1262,6 +1325,138 @@ class AiVoiceStudioCoordinator(
         } finally {
             tempFiles.forEach { runCatching { it.delete() } }
         }
+    }
+
+    private data class StableVoiceReference(
+        val path: String,
+        val transcript: String,
+    )
+
+    private class VoiceReferencePreparationFailure(
+        val messageAr: String,
+        val messageEn: String,
+    ) : IOException(messageEn)
+
+    private suspend fun ensureStableVoiceReference(
+        context: Context,
+        request: AiVoiceSynthRequest,
+        provider: AiVoiceStudioEngine,
+        backendUrl: String,
+        outputDir: File,
+        bearerToken: String,
+        onProgress: (Float, String) -> Unit,
+    ): StableVoiceReference {
+        val profileId = request.acousticProfileId
+        if (!profileId.matches(Regex("[a-f0-9]{24}"))) {
+            throw IOException("The acoustic profile identifier is invalid.")
+        }
+
+        val transcript = profileReferenceText(request)
+        val mutex = voiceReferenceLocks.computeIfAbsent(profileId) { Mutex() }
+        return mutex.withLock {
+            val directory = File(context.filesDir, "ai_voice_reference_profiles")
+            if (!directory.isDirectory && !directory.mkdirs()) {
+                throw IOException("Could not create the voice reference directory.")
+            }
+            val referenceFile = File(directory, "v1_$profileId.wav")
+            if (referenceFile.isFile && referenceFile.length() > 44L) {
+                return@withLock StableVoiceReference(referenceFile.absolutePath, transcript)
+            }
+            if (referenceFile.exists() && !referenceFile.delete()) {
+                throw IOException("Could not replace the incomplete voice reference.")
+            }
+
+            val generatedFile = File(outputDir, "voice_profile_anchor_${UUID.randomUUID()}.wav")
+            var returnedFile: File? = null
+            val partialFile = File(directory, "v1_$profileId.wav.part")
+            try {
+                onProgress(0.02f, "جاري إعداد ملف صوت ثابت لهذا البروفايل...")
+                val calibrationRequest = request.copy(
+                    text = transcript,
+                    referenceAudioPath = null,
+                    referenceTranscript = "",
+                    referenceAudioOptional = true,
+                )
+                val calibration = provider.synthesizeChunk(
+                    context = context,
+                    request = calibrationRequest,
+                    textChunk = transcript,
+                    backendUrl = backendUrl,
+                    outWavFile = generatedFile,
+                    bearerToken = bearerToken,
+                ) { progress, _ ->
+                    onProgress(
+                        0.02f + progress.coerceIn(0f, 1f) * 0.10f,
+                        "جاري إعداد ملف صوت ثابت لهذا البروفايل...",
+                    )
+                }
+                when (calibration) {
+                    is AiVoiceSynthOutcome.Success -> {
+                        returnedFile = File(calibration.audioFilePath)
+                    }
+                    is AiVoiceSynthOutcome.Error -> throw VoiceReferencePreparationFailure(
+                        messageAr = calibration.messageAr,
+                        messageEn = calibration.messageEn,
+                    )
+                    is AiVoiceSynthOutcome.ConfigurationRequired -> throw VoiceReferencePreparationFailure(
+                        messageAr = calibration.explanationAr,
+                        messageEn = calibration.explanationEn,
+                    )
+                }
+
+                val source = returnedFile
+                    ?: throw IOException("The engine did not return a voice reference.")
+                if (!source.isFile || source.length() <= 44L) {
+                    throw IOException("The generated voice reference is empty or invalid.")
+                }
+                if (source.length() > 12L * 1024L * 1024L) {
+                    throw IOException("The generated voice reference exceeds the supported size.")
+                }
+
+                FileInputStream(source).use { input ->
+                    FileOutputStream(partialFile).use { output ->
+                        val buffer = ByteArray(32 * 1024)
+                        while (true) {
+                            coroutineContext.ensureActive()
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            if (count == 0) continue
+                            output.write(buffer, 0, count)
+                        }
+                        output.fd.sync()
+                    }
+                }
+                if (!partialFile.renameTo(referenceFile)) {
+                    throw IOException("Could not atomically save the voice reference.")
+                }
+                if (!referenceFile.isFile || referenceFile.length() <= 44L) {
+                    referenceFile.delete()
+                    throw IOException("The saved voice reference failed validation.")
+                }
+                onProgress(0.12f, "تم تجهيز ملف الصوت الثابت.")
+                StableVoiceReference(referenceFile.absolutePath, transcript)
+            } finally {
+                if (partialFile.exists() && !partialFile.delete()) {
+                    Log.w("AiVoiceProfile", "Could not remove partial voice reference.")
+                }
+                if (generatedFile.exists() && !generatedFile.delete()) {
+                    Log.w("AiVoiceProfile", "Could not remove generated profile sample.")
+                }
+                returnedFile?.takeIf { it != generatedFile && it.exists() }?.let {
+                    if (!it.delete()) Log.w("AiVoiceProfile", "Could not remove temporary profile output.")
+                }
+            }
+        }
+    }
+
+    private fun profileReferenceText(request: AiVoiceSynthRequest): String {
+        val text = when (request.language) {
+            AiVoiceLanguage.AR -> "مرحباً بكم، نتمنى لكم يوماً سعيداً."
+            AiVoiceLanguage.EN -> "Hello and welcome. We hope you have a wonderful day."
+            AiVoiceLanguage.TR -> "Merhaba, hoş geldiniz. Size güzel bir gün dileriz."
+            AiVoiceLanguage.FA -> "سلام، خوش آمدید. امیدواریم روز خوبی داشته باشید."
+        }
+        return AiVoicePromptBuilder.normalizeTargetText(text, request.language, request.dialect)
     }
 
     private fun stableSynthesisCacheFile(
@@ -1392,18 +1587,16 @@ class AiVoiceStudioCoordinator(
                 val character = characters.firstOrNull { it.id == turn.characterId } ?: characters.first()
                 val engine = selectedEngineOverride ?: character.preferredEngine
                 primaryEngine = engine
-                val packagedReference = aiVoiceCloudPackReferenceFile(context, character.id)
-                    .takeIf { it.isFile }?.absolutePath
-                val referencePath = character.referenceAudioPath ?: packagedReference
                 onProgress(
                     0.05f + (idx.toFloat() / activeTurns.size.toFloat()) * 0.80f,
-                    "توليد جملة ${idx + 1}/${activeTurns.size} (${character.nameAr})...",
+                    "جاري توليد جملة الحوار بصوت ${character.nameAr}...",
                 )
 
                 val turnReq = AiVoiceSynthRequest(
                     engine = engine,
                     text = turn.text.trim(),
                     language = character.language,
+                    voiceCharacterId = character.id,
                     dialect = character.dialect,
                     category = character.category,
                     voiceDescriptionPrompt = character.voiceDescriptionPrompt,
@@ -1422,10 +1615,6 @@ class AiVoiceStudioCoordinator(
                     pitchContour = character.defaultPitchContour,
                     timbre = character.defaultTimbre,
                     articulationClarity = character.defaultArticulationClarity,
-                    referenceAudioPath = referencePath,
-                    referenceTranscript = character.referenceTranscript,
-                    referenceAudioOptional = character.referenceAudioPath.isNullOrBlank() &&
-                        packagedReference != null,
                 )
 
                 val turnWav = File(outputDir, "dialogue_turn_${idx}_${UUID.randomUUID()}.wav")
@@ -1456,7 +1645,7 @@ class AiVoiceStudioCoordinator(
                 sampleRate = stitched.sampleRate,
                 durationMs = stitched.durationMs,
                 engineUsed = primaryEngine,
-                appliedPromptSummary = "حوار متعدد الشخصيات (${activeTurns.size} جمل)",
+                appliedPromptSummary = "حوار متعدد الشخصيات",
                 isCloudGenerated = anyCloud,
             )
         } finally {

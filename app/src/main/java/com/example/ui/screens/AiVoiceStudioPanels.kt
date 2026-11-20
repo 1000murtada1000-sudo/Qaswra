@@ -28,13 +28,10 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CloudDone
 import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.Delete
-import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Info
-import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.Memory
-import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
@@ -47,8 +44,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -251,7 +246,7 @@ fun AiVoiceOutputPlayerCard(
                         )
                         state.lastOutputEngine?.let { eng ->
                             Text(
-                                text = "${if (isEnglish) eng.shortTitleEn else eng.shortTitleAr} • ${state.lastOutputSampleRate / 1000} kHz",
+                                text = if (isEnglish) eng.shortTitleEn else eng.shortTitleAr,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = StudioColors.Cyan,
                                 maxLines = 1,
@@ -626,9 +621,9 @@ fun AiVoiceDialogueTab(
                     Column {
                         Text(
                             text = if (isEnglish) {
-                                "Emotion: ${(turn.emotionIntensity * 100).roundToInt()}% • Pause after: ${turn.pauseAfterMs} ms"
+                                "Emotion: ${turn.emotion.titleEn} • Pace: ${turn.pace.titleEn}"
                             } else {
-                                "شدة الانفعال: ${(turn.emotionIntensity * 100).roundToInt()}% • صمت بعد الجملة: ${turn.pauseAfterMs} مللي ثانية"
+                                "النبرة: ${turn.emotion.titleAr} • الإيقاع: ${turn.pace.titleAr}"
                             },
                             style = MaterialTheme.typography.labelSmall,
                             color = StudioColors.TextSecondary,
@@ -710,18 +705,11 @@ fun AiVoiceDialogueTab(
 @Composable
 fun AiVoiceCharactersTab(
     state: AiVoiceStudioUiState,
-    hasStudioAudio: Boolean,
     isEnglish: Boolean,
     onApplyCharacterToStudio: (AiVoiceCharacter) -> Unit,
     onAddCharacterToDialogue: (AiVoiceCharacter) -> Unit,
     onSaveCurrentAsCharacter: (String, String) -> Unit,
     onDeleteSavedCharacter: (String) -> Unit,
-    onPickReferenceFile: () -> Unit,
-    onUseStudioBufferAsReference: () -> Unit,
-    onClearReference: () -> Unit,
-    onScriptChange: (String) -> Unit,
-    onReferenceTranscriptChange: (String) -> Unit,
-    onRightsConfirmedChange: (Boolean) -> Unit,
     onSaveOutputWav: () -> Unit,
     onShareOutput: () -> Unit,
 ) {
@@ -730,187 +718,34 @@ fun AiVoiceCharactersTab(
     var newNameEn by remember { mutableStateOf("") }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        // Voice Cloning section (isolated safely from the main 4-card Studio screen)
         Card(
             shape = RoundedCornerShape(12.dp),
             colors = CardDefaults.cardColors(containerColor = StudioColors.CardSurface),
             border = BorderStroke(1.dp, StudioColors.Border),
             modifier = Modifier
                 .fillMaxWidth()
-                .testTag("studio_cloning_card"),
+                .testTag("studio_profile_reference_card"),
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(14.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(
-                    text = if (isEnglish) "Voice Cloning (Reference Audio)" else "استنساخ الصوت (عينة مرجعية)",
+                    text = if (isEnglish) "Stable Cloud Voice Profile" else "ملف البصمة السحابية الثابتة",
                     style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                     color = StudioColors.Cyan,
                 )
-                if (state.selectedEngine.supportsVoiceCloning()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        OutlinedButton(
-                            onClick = onPickReferenceFile,
-                            enabled = !state.isReferenceImporting,
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier
-                                .weight(1f)
-                                .defaultMinSize(minHeight = 48.dp)
-                                .testTag("ai_voice_pick_ref_button"),
-                        ) {
-                            Icon(Icons.Rounded.LibraryMusic, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text(if (isEnglish) "Upload Audio" else "رفع عينة", maxLines = 1)
-                        }
-                        OutlinedButton(
-                            onClick = onUseStudioBufferAsReference,
-                            enabled = hasStudioAudio && !state.isReferenceImporting,
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier
-                                .weight(1f)
-                                .defaultMinSize(minHeight = 48.dp)
-                                .testTag("ai_voice_use_studio_ref_button"),
-                        ) {
-                            Icon(Icons.Rounded.Mic, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text(if (isEnglish) "From Studio" else "من الاستوديو", maxLines = 1)
-                        }
-                    }
-
-                    if (!state.referenceAudioName.isNullOrBlank()) {
-                        Surface(
-                            shape = RoundedCornerShape(10.dp),
-                            color = StudioColors.ElevatedSurface,
-                            border = BorderStroke(1.dp, StudioColors.Emerald.copy(alpha = 0.5f)),
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 10.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = state.referenceAudioName,
-                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                                        color = StudioColors.Emerald,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                    Text(
-                                        text = formatDurationMs(state.referenceAudioDurationMs),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = StudioColors.TextSecondary,
-                                    )
-                                }
-                                IconButton(onClick = onClearReference, modifier = Modifier.size(48.dp)) {
-                                    Icon(Icons.Rounded.DeleteOutline, contentDescription = "Clear Ref", tint = StudioColors.RoseBright)
-                                }
-                            }
-                        }
-                        OutlinedTextField(
-                            value = state.referenceTranscript,
-                            onValueChange = onReferenceTranscriptChange,
-                            label = {
-                                Text(if (isEnglish) "Reference spoken words" else "نص العينة المرجعية")
-                            },
-                            maxLines = 2,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Checkbox(
-                                checked = state.referenceRightsConfirmed,
-                                onCheckedChange = onRightsConfirmedChange,
-                                colors = CheckboxDefaults.colors(checkedColor = StudioColors.Cyan),
-                            )
-                            Text(
-                                text = if (isEnglish) {
-                                    "I confirm legal rights/consent to use this reference voice."
-                                } else {
-                                    "أؤكد امتلاك الإذن القانوني لاستخدام هذا الصوت."
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = StudioColors.TextSecondary,
-                            )
-                        }
-                    }
-                    if (state.isReferenceImporting || state.referenceImportStatus.isNotBlank()) {
-                        when {
-                            state.referenceImportProgress != null -> {
-                                LinearProgressIndicator(
-                                    progress = { state.referenceImportProgress.coerceIn(0f, 1f) },
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(6.dp)
-                                        .clip(RoundedCornerShape(3.dp)),
-                                    color = StudioColors.Cyan,
-                                )
-                                Text(
-                                    text = "${(state.referenceImportProgress.coerceIn(0f, 1f) * 100).roundToInt()}%",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = StudioColors.TextSecondary,
-                                )
-                            }
-                            state.isReferenceImporting -> LinearProgressIndicator(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(6.dp)
-                                    .clip(RoundedCornerShape(3.dp)),
-                                color = StudioColors.Cyan,
-                            )
-                        }
-                        Text(
-                            text = state.referenceImportStatus,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = when {
-                                state.isReferenceImporting -> StudioColors.Cyan
-                                state.referenceImportProgress != null -> StudioColors.Emerald
-                                else -> StudioColors.RoseBright
-                            },
-                        )
-                    }
-                    OutlinedTextField(
-                        value = state.scriptText,
-                        onValueChange = onScriptChange,
-                        label = {
-                            Text(
-                                if (isEnglish) {
-                                    "Text to speak in the cloned voice"
-                                } else {
-                                    "النص المراد نطقه بالصوت المستنسخ"
-                                },
-                            )
-                        },
-                        minLines = 3,
-                        maxLines = 6,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = StudioColors.Cyan,
-                            unfocusedBorderColor = StudioColors.Border,
-                            focusedTextColor = StudioColors.TextPrimary,
-                            unfocusedTextColor = StudioColors.TextPrimary,
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("ai_voice_clone_target_text"),
-                    )
-                } else {
-                    Text(
-                        text = if (isEnglish) {
-                            "Voice Cloning is available when selecting VoxCPM2 engine."
-                        } else {
-                            "استنساخ الصوت متاح عند اختيار المحرك الأساسي العالمي (VoxCPM2)."
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = StudioColors.TextSecondary,
-                    )
-                }
+                Text(
+                    text = if (isEnglish) {
+                        "A fixed calibration sample is created for the selected voice profile and reused for every script. Your generated script is never used as a reference."
+                    } else {
+                        "تُنشأ عينة معايرة ثابتة للبروفايل الصوتي المختار وتُعاد الاستفادة منها مع كل نص. لا يُستخدم النص أو الصوت الناتج مرجعاً."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = StudioColors.TextSecondary,
+                )
 
                 HorizontalDivider(color = StudioColors.Border)
 
@@ -1001,7 +836,7 @@ fun AiVoiceCharactersTab(
                                 color = if (isSelected) StudioColors.Cyan else StudioColors.TextPrimary,
                             )
                             Text(
-                                text = "${if (isEnglish) character.category.titleEn else character.category.titleAr} • SID ${character.fixedSid}",
+                                text = if (isEnglish) character.category.titleEn else character.category.titleAr,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = StudioColors.TextSecondary,
                             )
@@ -1135,9 +970,9 @@ fun AiVoiceServerSetupTab(
                 )
                 Text(
                     text = if (isEnglish) {
-                        "The public demo does not expose a speaker ID or seed. Matching requests reuse the exact processed audio from a bounded on-device cache; a new uncached generation cannot be guaranteed identical by the public service."
+                        "The public demo may vary output between generation requests; repeated matching requests reuse cached audio."
                     } else {
-                        "الخدمة العامة لا توفر معرف متحدث أو بذرة ثابتة. يعيد التطبيق الصوت المعالج نفسه للطلبات المطابقة من ذاكرة مؤقتة محدودة؛ ولا يمكن ضمان تطابق توليد جديد غير مخزن عبر الخدمة العامة."
+                        "قد تختلف نتيجة الخدمة العامة بين طلبات التوليد؛ وتُعاد النتيجة المخزنة للطلبات المطابقة."
                     },
                     style = MaterialTheme.typography.labelSmall,
                     color = StudioColors.TextSecondary,
