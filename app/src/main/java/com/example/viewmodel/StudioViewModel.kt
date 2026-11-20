@@ -4362,10 +4362,10 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private suspend fun copyExportBytes(
+    private fun copyExportBytes(
         result: ExportedAudioResult,
         output: java.io.OutputStream,
-    ) = withContext(Dispatchers.IO) {
+    ) {
         val totalBytes = result.file.length()
         val buffer = ByteArray(262_144)
         var bytesCopied = 0L
