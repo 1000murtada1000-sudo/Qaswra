@@ -1271,6 +1271,7 @@ fun SonixExitConfirmDialog(
     language: AppLanguage,
     hasUnsavedChanges: Boolean = false,
     hasAudio: Boolean = false,
+    hasActiveProject: Boolean = false,
     isProcessing: Boolean = false,
     isExporting: Boolean = false,
     onStay: () -> Unit,
@@ -1280,6 +1281,7 @@ fun SonixExitConfirmDialog(
     if (!open) return
     val isEn = language == AppLanguage.EN
     val hasPendingWork = hasUnsavedChanges || hasAudio || isProcessing || isExporting
+    val showSaveDraft = hasActiveProject || hasAudio
     AlertDialog(
         onDismissRequest = onStay,
         containerColor = StudioColors.CardSurface,
@@ -1298,13 +1300,13 @@ fun SonixExitConfirmDialog(
                 Text(
                     text = if (isEn) {
                         when {
-                            !hasPendingWork -> "Choose how to leave Sonix ✦."
+                            !hasPendingWork -> "Would you like to leave Sonix ✦?"
                             isProcessing || isExporting -> "An audio operation is still running. Choose what to do before leaving."
                             else -> "You have audio or unsaved work. Choose what to do before leaving."
                         }
                     } else {
                         when {
-                            !hasPendingWork -> "اختر كيفية مغادرة Sonix ✦."
+                            !hasPendingWork -> "هل ترغب في مغادرة تطبيق Sonix ✦؟"
                             isProcessing || isExporting -> "هناك عملية صوتية جارية. اختر ما تريد فعله قبل المغادرة."
                             else -> "لديك ملف صوتي أو تعديلات غير محفوظة. اختر ما تريد فعله قبل المغادرة."
                         }
@@ -1312,7 +1314,7 @@ fun SonixExitConfirmDialog(
                     style = MaterialTheme.typography.bodyMedium,
                     color = StudioColors.TextSecondary,
                 )
-                if (hasPendingWork) {
+                if (showSaveDraft) {
                     Button(
                         onClick = onStay,
                         colors = ButtonDefaults.buttonColors(
@@ -1340,25 +1342,39 @@ fun SonixExitConfirmDialog(
                     ) {
                         Text(if (isEn) "Discard and exit" else "إلغاء وخروج", color = StudioColors.RoseBright)
                     }
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        OutlinedButton(
+                            onClick = onStay,
+                            modifier = Modifier.weight(1f).defaultMinSize(minHeight = 40.dp).testTag("exit_dialog_stay_button"),
+                            shape = RoundedCornerShape(10.dp),
+                            border = BorderStroke(1.dp, StudioColors.Cyan.copy(alpha = 0.6f)),
+                        ) {
+                            Text(
+                                if (isEn) "Return to app" else "الرجوع للتطبيق",
+                                color = StudioColors.Cyan,
+                            )
+                        }
+                        Button(
+                            onClick = onConfirmExit,
+                            modifier = Modifier.weight(1f).defaultMinSize(minHeight = 40.dp).testTag("exit_dialog_confirm_button"),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = StudioColors.RoseBright,
+                                contentColor = StudioColors.BgTop,
+                            ),
+                            shape = RoundedCornerShape(10.dp),
+                        ) {
+                            Text(if (isEn) "Exit" else "خروج")
+                        }
+                    }
                 }
             }
         },
-        confirmButton = {
-            if (!hasPendingWork) {
-                Button(
-                    onClick = onConfirmExit,
-                    colors = ButtonDefaults.buttonColors(containerColor = StudioColors.RoseBright, contentColor = StudioColors.BgTop),
-                    shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier.defaultMinSize(minHeight = 40.dp).testTag("exit_dialog_confirm_button"),
-                ) { Text(if (isEn) "Exit" else "خروج", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)) }
-            } else Unit
-        },
-        dismissButton = {
-            if (!hasPendingWork) OutlinedButton(onClick = onStay, border = BorderStroke(1.dp, StudioColors.Cyan.copy(alpha = 0.6f)),
-                shape = RoundedCornerShape(10.dp), modifier = Modifier.defaultMinSize(minHeight = 40.dp).testTag("exit_dialog_stay_button")) {
-                Text(if (isEn) "Stay" else "البقاء", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold), color = StudioColors.Cyan)
-            } else Unit
-        },
+        confirmButton = {},
+        dismissButton = {},
         properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
         modifier = Modifier.padding(20.dp)
     )

@@ -184,9 +184,7 @@ fun HomeScreen(
     var activeToolInfo by remember { mutableStateOf<Pair<String, String>?>(null) }
     var exitConfirmDialogOpen by remember { mutableStateOf(false) }
 
-    BackHandler(
-        enabled = uiState.hasAudio || uiState.hasUnsavedChanges || uiState.isProcessing || uiState.isBusy || uiState.isExporting,
-    ) {
+    BackHandler(enabled = true) {
         exitConfirmDialogOpen = true
     }
 
@@ -1093,6 +1091,7 @@ fun HomeScreen(
         language = lang,
         hasUnsavedChanges = uiState.hasUnsavedChanges,
         hasAudio = uiState.hasAudio,
+        hasActiveProject = uiState.activeProjectId > 0L || uiState.hasUnsavedChanges,
         isProcessing = uiState.isProcessing || uiState.isBusy,
         isExporting = uiState.isExporting,
         onStay = { exitConfirmDialogOpen = false },

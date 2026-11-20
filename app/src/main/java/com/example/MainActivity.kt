@@ -1273,6 +1273,7 @@ private fun SonixRootApp(
                     saveLocation = uiState.exportSaveLocation,
                     complete = uiState.exportComplete,
                     onDismiss = { viewModel.dismissExportStatus() },
+                    onCancel = { viewModel.cancelExport() },
                 )
             }
 
@@ -1355,6 +1356,7 @@ private fun ExportProgressDialog(
     saveLocation: String?,
     complete: Boolean,
     onDismiss: () -> Unit,
+    onCancel: () -> Unit,
 ) {
     val isEnglish = language == AppLanguage.EN
     val boundedProgress = progress.coerceIn(0f, 1f)
@@ -1409,6 +1411,17 @@ private fun ExportProgressDialog(
                     ),
                 ) {
                     Text(if (isEnglish) "Done" else "تم")
+                }
+            } else {
+                OutlinedButton(
+                    onClick = onCancel,
+                    border = BorderStroke(1.dp, StudioColors.RoseBright.copy(alpha = 0.65f)),
+                    shape = RoundedCornerShape(10.dp),
+                ) {
+                    Text(
+                        if (isEnglish) "Cancel" else "إلغاء",
+                        color = StudioColors.RoseBright,
+                    )
                 }
             }
         },

@@ -631,6 +631,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private var bannerJob: Job? = null
+    private var exportJob: Job? = null
     private var tempPreviewJob: Job? = null
     private var sliderDebounceJob: Job? = null
     private var activeOnlineJob: Job? = null
@@ -1028,6 +1029,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun completeExportTracking(fileName: String, destination: String) {
+        exportJob = null
         pendingExportResult = null
         pendingSuggestedFileName = null
         _uiState.update {
@@ -1046,6 +1048,8 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun cancelExportTracking() {
+        exportJob?.cancel()
+        exportJob = null
         pendingExportResult = null
         pendingSuggestedFileName = null
         _uiState.update {
@@ -1061,6 +1065,14 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
 
     fun dismissExportStatus() {
         if (_uiState.value.exportComplete) cancelExportTracking()
+    }
+
+    fun cancelExport() {
+        postBanner(
+            if (_uiState.value.language == AppLanguage.EN) "Export cancelled"
+            else "تم إلغاء الحفظ والتصدير",
+        )
+        cancelExportTracking()
     }
 
     private fun notifyAudioCompletionIfBackground(title: String, message: String) {
@@ -4189,20 +4201,35 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             _sideEffects.tryEmit(StudioSideEffect.PromptPickSaveFolderOnce(result, suggestedName))
             return
         }
-        viewModelScope.launch(Dispatchers.IO) {
-            val ok = writeResultToTreeFolder(result, suggestedName, treeUriStr)
-            if (ok) {
-                val folderLabel = _uiState.value.defaultSaveFolderName ?: "Default Folder"
-                val msg = if (_uiState.value.language == AppLanguage.EN) {
-                    "Saved ${result.extension.uppercase()} to $folderLabel"
+        exportJob?.cancel()
+        exportJob = viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val ok = writeResultToTreeFolder(result, suggestedName, treeUriStr)
+                if (ok) {
+                    val folderLabel = _uiState.value.defaultSaveFolderName ?: "Default Folder"
+                    val msg = if (_uiState.value.language == AppLanguage.EN) {
+                        "Saved ${result.extension.uppercase()} to $folderLabel"
+                    } else {
+                        "تم حفظ الملف (${result.extension.uppercase()}) تلقائياً في: $folderLabel"
+                    }
+                    postBanner(msg)
+                    completeExportTracking(suggestedName, folderLabel)
                 } else {
-                    "تم حفظ الملف (${result.extension.uppercase()}) تلقائياً في: $folderLabel"
+                    cancelExportTracking()
+                    postBanner(
+                        if (_uiState.value.language == AppLanguage.EN) "Unable to save the audio file"
+                        else "تعذر حفظ الملف الصوتي",
+                    )
                 }
-                postBanner(msg)
-                completeExportTracking(suggestedName, folderLabel)
-            } else {
-                updateExportProgress(0f)
-                _sideEffects.tryEmit(StudioSideEffect.PromptSaveDocument(result, suggestedName))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("AudioExport", "Failed to save exported audio", e)
+                cancelExportTracking()
+                postBanner(
+                    if (_uiState.value.language == AppLanguage.EN) "Unable to save the audio file"
+                    else "تعذر حفظ الملف الصوتي",
+                )
             }
         }
     }
@@ -4232,7 +4259,8 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             .ifBlank { treeUri.lastPathSegment?.substringAfterLast('/') ?: "Sonix Exports" }
 
         defaultSaveTreeUriString = treeUri.toString()
-        viewModelScope.launch {
+        exportJob?.cancel()
+        exportJob = viewModelScope.launch {
             repository.saveDefaultSaveFolder(treeUri.toString(), folderName)
             if (pending != null && !suggested.isNullOrBlank()) {
                 val ok = withContext(Dispatchers.IO) {
@@ -4247,7 +4275,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                     postBanner(msg)
                     completeExportTracking(suggested ?: pending.file.name, folderName)
                 } else {
-                    updateExportProgress(0f)
+                    cancelExportTracking()
                     _sideEffects.tryEmit(StudioSideEffect.PromptSaveDocument(pending, suggested))
                 }
             } else {
@@ -4303,8 +4331,9 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
         updateExportProgress(0f)
-        viewModelScope.launch(Dispatchers.IO) {
-            runCatching {
+        exportJob?.cancel()
+        exportJob = viewModelScope.launch(Dispatchers.IO) {
+            try {
                 val out = getApplication<Application>().contentResolver.openOutputStream(destinationUri)
                     ?: throw IllegalStateException("Could not open the selected destination")
                 out.use { copyExportBytes(result, it) }
@@ -4316,31 +4345,50 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 postBanner("تم حفظ الملف بصيغة ${result.extension.uppercase()} بنجاح")
                 completeExportTracking(displayName, location)
-            }.onFailure { error ->
+            } catch (e: CancellationException) {
+                throw e
+            } catch (error: Exception) {
                 Log.e("AudioExport", "Failed saving exported audio document", error)
-                pendingExportResult = null
-                pendingSuggestedFileName = null
                 cancelExportTracking()
-                postBanner("تعذر حفظ الملف في الموقع المحدد")
+                postBanner(
+                    if (_uiState.value.language == AppLanguage.EN) "Unable to save the audio file in the selected location"
+                    else "تعذر حفظ الملف في الموقع المحدد",
+                )
+            } finally {
+                if (!(_uiState.value.isExporting || _uiState.value.exportComplete)) {
+                    exportJob = null
+                }
             }
         }
     }
 
-    private fun copyExportBytes(result: ExportedAudioResult, output: java.io.OutputStream) {
-        val totalBytes = result.file.length().coerceAtLeast(1L)
-        val buffer = ByteArray(32 * 1024)
-        var copied = 0L
+    private suspend fun copyExportBytes(
+        result: ExportedAudioResult,
+        output: java.io.OutputStream,
+    ) = withContext(Dispatchers.IO) {
+        val totalBytes = result.file.length()
+        val buffer = ByteArray(262_144)
+        var bytesCopied = 0L
         updateExportProgress(0f)
-        result.file.inputStream().buffered().use { input ->
-            while (true) {
-                val count = input.read(buffer)
-                if (count < 0) break
-                output.write(buffer, 0, count)
-                copied += count
-                updateExportProgress((copied.toFloat() / totalBytes).coerceIn(0f, 1f))
+
+        output.buffered(buffer.size).use { bufferedOutput ->
+            result.file.inputStream().buffered(buffer.size).use { input ->
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    if (count == 0) continue
+                    bufferedOutput.write(buffer, 0, count)
+                    bytesCopied += count.toLong()
+                    val fraction = if (totalBytes > 0L) {
+                        bytesCopied.toFloat() / totalBytes.toFloat()
+                    } else {
+                        0f
+                    }
+                    updateExportProgress(fraction.coerceIn(0f, 1f))
+                }
+                bufferedOutput.flush()
             }
         }
-        output.flush()
         updateExportProgress(1f)
     }
 
