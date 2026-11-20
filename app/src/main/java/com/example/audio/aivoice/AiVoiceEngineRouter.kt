@@ -846,7 +846,7 @@ class SonixLocalStudioEngineProvider : AiVoiceStudioEngine {
         val mappedDialect = mapToLocalDialect(request.language, request.dialect)
         val mappedGender = when (request.category) {
             AiVoiceCategory.FEMALE, AiVoiceCategory.CHILD -> TtsGender.FEMALE
-            AiVoiceCategory.MALE -> TtsGender.MALE
+            AiVoiceCategory.MALE, AiVoiceCategory.OLDER_ADULT -> TtsGender.MALE
         }
         val mappedStyle = when (request.emotion) {
             AiVoiceEmotion.SAD -> TtsDeliveryStyle.SAD

@@ -8,7 +8,8 @@ object AiVoicePromptBuilder {
         val cleanText = text
             .replace(Regex("</?[A-Za-z][A-Za-z0-9:_-]*(?:\\s+[^<>]*?)?\\s*/?>"), " ")
             .trim()
-            .replace(Regex("\\s+"), " ")
+            .replace(Regex("[\\t\\x0B\\f\\r ]+"), " ")
+            .replace(Regex("\\n{2,}"), "\n")
         if (language != AiVoiceLanguage.AR) return cleanText
         return when (dialect) {
             AiArabicDialect.MSA -> cleanText
@@ -27,6 +28,7 @@ object AiVoicePromptBuilder {
         val profile = request.voiceDescriptionPrompt.lowercase()
         val catHint = when {
             request.category == AiVoiceCategory.CHILD -> "child speaker"
+            request.category == AiVoiceCategory.OLDER_ADULT -> "elderly speaker"
             "child" in profile || "طفل" in profile -> "child speaker"
             "elder" in profile || "مسن" in profile -> "elderly male speaker"
             request.category == AiVoiceCategory.MALE -> "male adult speaker"
@@ -129,9 +131,11 @@ object AiVoicePromptBuilder {
      * Splits long input scripts on sentence/clause boundaries cleanly.
      */
     fun splitTextIntoChunks(text: String, maxCharsPerChunk: Int = 260): List<String> {
-        val normalized = text.trim().replace(Regex("\\s+"), " ")
+        val normalized = text.trim()
+            .replace(Regex("[\\t\\x0B\\f\\r ]+"), " ")
+            .replace(Regex("\\n{2,}"), "\n")
         if (normalized.isEmpty()) return emptyList()
-        val phraseBoundary = Regex("(?<=[.!؟?!\\n؛،,])\\s+")
+        val phraseBoundary = Regex("(?<=[.!؟?!؛،,])\\s+|\\n+")
         if (normalized.length <= maxCharsPerChunk && !phraseBoundary.containsMatchIn(normalized)) {
             return listOf(normalized)
         }

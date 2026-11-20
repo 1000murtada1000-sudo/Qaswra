@@ -79,6 +79,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.audio.aivoice.AiVoiceCharacter
+import com.example.audio.aivoice.ALL_BUILT_IN_AI_VOICE_CHARACTERS
 import com.example.audio.aivoice.AiArabicDialect
 import com.example.audio.aivoice.AiEnglishAccent
 import com.example.audio.aivoice.AiBreathCadence
@@ -96,6 +97,7 @@ import com.example.ui.theme.StudioColors
 import com.example.ui.theme.TelemetryTextStyle
 import java.util.Locale
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 
 @Composable
 internal fun CompactDropdownField(
@@ -217,9 +219,26 @@ internal fun AiVoiceGroup1TextCard(
     scriptText: String,
     isEnglish: Boolean,
     onScriptChange: (String) -> Unit,
+    onScriptDraftChange: (String) -> Unit = {},
 ) {
-    val words = remember(scriptText) { TtsTextLimits.countWords(scriptText) }
-    val chars = scriptText.length
+    var scriptDraft by rememberSaveable { mutableStateOf(scriptText) }
+    var countedText by remember { mutableStateOf(scriptText) }
+
+    LaunchedEffect(scriptText) {
+        if (scriptText != scriptDraft) scriptDraft = scriptText
+        onScriptDraftChange(scriptText)
+    }
+    LaunchedEffect(scriptDraft) {
+        delay(250)
+        val limitedText = TtsTextLimits.limitWords(scriptDraft)
+        countedText = limitedText
+        if (limitedText != scriptDraft) scriptDraft = limitedText
+        onScriptDraftChange(limitedText)
+        onScriptChange(limitedText)
+    }
+
+    val words = remember(countedText) { TtsTextLimits.countWords(countedText) }
+    val chars = countedText.length
 
     Card(
         shape = RoundedCornerShape(12.dp),
@@ -276,9 +295,14 @@ internal fun AiVoiceGroup1TextCard(
                                 .testTag("ai_voice_text_counters"),
                         )
                     }
-                    if (scriptText.isNotEmpty()) {
+                    if (scriptDraft.isNotEmpty()) {
                         IconButton(
-                            onClick = { onScriptChange("") },
+                            onClick = {
+                                scriptDraft = ""
+                                countedText = ""
+                                onScriptDraftChange("")
+                                onScriptChange("")
+                            },
                             modifier = Modifier
                                 .size(48.dp)
                                 .testTag("ai_voice_clear_script_button"),
@@ -295,8 +319,11 @@ internal fun AiVoiceGroup1TextCard(
             }
 
             OutlinedTextField(
-                value = scriptText,
-                onValueChange = { onScriptChange(TtsTextLimits.limitWords(it)) },
+                value = scriptDraft,
+                onValueChange = {
+                    scriptDraft = it
+                    onScriptDraftChange(it)
+                },
                 placeholder = {
                     Text(
                         text = if (isEnglish) {
@@ -443,6 +470,7 @@ internal fun AiVoiceGroup2VoiceSelectionCard(
     onToggleFavorite: (String) -> Unit,
 ) {
     var activeFilter by rememberSaveable { mutableStateOf(state.selectedCategory.toGroupFilter()) }
+    var voiceSearch by rememberSaveable { mutableStateOf("") }
     val focusManager = LocalFocusManager.current
 
     LaunchedEffect(state.selectedCharacterId, state.selectedCategory) {
@@ -614,8 +642,31 @@ internal fun AiVoiceGroup2VoiceSelectionCard(
                 }
             }
 
-            val matchingCharacters = remember(state.allCharacters, activeFilter) {
-                state.allCharacters.filter { it.category.toGroupFilter() == activeFilter }
+            val matchingCharacters = remember(
+                state.savedCharacters,
+                state.favoriteCharacterIds,
+                state.selectedCharacterId,
+                activeFilter,
+                voiceSearch,
+            ) {
+                val query = voiceSearch.trim()
+                (state.savedCharacters + ALL_BUILT_IN_AI_VOICE_CHARACTERS)
+                    .asSequence()
+                    .filter { it.category.toGroupFilter() == activeFilter }
+                    .filter { character ->
+                        query.isBlank() ||
+                            character.id.contains(query, ignoreCase = true) ||
+                            character.displayName(false).contains(query, ignoreCase = true) ||
+                            character.displayName(true).contains(query, ignoreCase = true) ||
+                            character.displayDescription(false).contains(query, ignoreCase = true) ||
+                            character.displayDescription(true).contains(query, ignoreCase = true)
+                    }
+                    .sortedWith(
+                        compareByDescending<AiVoiceCharacter> { state.isCharacterFavorite(it.id) }
+                            .thenByDescending { it.id == state.selectedCharacterId },
+                    )
+                    .take(if (query.isBlank()) 24 else 50)
+                    .toList()
             }
 
             run {
@@ -623,6 +674,44 @@ internal fun AiVoiceGroup2VoiceSelectionCard(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
+                    OutlinedTextField(
+                        value = voiceSearch,
+                        onValueChange = { voiceSearch = it },
+                        placeholder = {
+                            Text(
+                                text = if (isEnglish) "Search voice blueprints..." else "ابحث في البصمات الصوتية...",
+                                color = StudioColors.TextMuted,
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Rounded.Search,
+                                contentDescription = null,
+                                tint = StudioColors.Cyan,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = StudioColors.Cyan,
+                            unfocusedBorderColor = StudioColors.Border,
+                            focusedTextColor = StudioColors.TextPrimary,
+                            unfocusedTextColor = StudioColors.TextPrimary,
+                        ),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("ai_voice_blueprint_search"),
+                    )
+                    Text(
+                        text = if (isEnglish) {
+                            "1,018 deterministic blueprints • search to browse more"
+                        } else {
+                            "١٬٠١٨ بصمة ثابتة • ابحث لاستعراض المزيد"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = StudioColors.TextSecondary,
+                    )
                     matchingCharacters.forEach { ch ->
                         val isCharSelected = state.selectedCharacterId == ch.id
                         val isFav = state.isCharacterFavorite(ch.id)

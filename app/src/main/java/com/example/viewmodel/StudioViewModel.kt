@@ -717,6 +717,11 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
         viewModelScope.launch(safeCoroutineHandler) {
+            repository.favoriteAiVoiceCharacterIdsFlow.collect { ids ->
+                _aiVoiceUiState.update { it.copy(favoriteCharacterIds = ids) }
+            }
+        }
+        viewModelScope.launch(safeCoroutineHandler) {
             repository.aiVoiceBackendUrlFlow.collect { url ->
                 _aiVoiceUiState.update { it.copy(backendServerUrl = url) }
             }
@@ -7743,13 +7748,11 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun toggleAiVoiceCharacterFavorite(characterId: String) {
-        _aiVoiceUiState.update { cur ->
-            val next = if (characterId in cur.favoriteCharacterIds) {
-                cur.favoriteCharacterIds - characterId
-            } else {
-                cur.favoriteCharacterIds + characterId
-            }
-            cur.copy(favoriteCharacterIds = next)
+        val current = _aiVoiceUiState.value.favoriteCharacterIds
+        val next = if (characterId in current) current - characterId else current + characterId
+        _aiVoiceUiState.update { it.copy(favoriteCharacterIds = next) }
+        viewModelScope.launch(safeCoroutineHandler) {
+            repository.saveFavoriteAiVoiceCharacterIds(next)
         }
     }
 
@@ -8008,7 +8011,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         val packedReference = aiVoiceCloudPackReferenceFile(
             getApplication<Application>(),
             character.id,
-        ).takeIf { it.isFile }?.absolutePath
+        ).takeIf { it.isFile && it.length() > 44L }?.absolutePath
         _aiVoiceUiState.update { cur ->
             val targetEngine = cur.selectedEngine
             val safeEmotion = if (character.defaultEmotion in targetEngine.supportedEmotions()) {
@@ -8055,11 +8058,20 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                     } else {
                         cur.referenceAudioName
                     },
-                referenceTranscript = character.referenceTranscript.ifBlank { cur.referenceTranscript },
+                referenceTranscript = character.referenceTranscript.ifBlank {
+                    if (nextReferencePath == packedReference && packedReference != null) {
+                        aiVoiceCloudPackSampleText(safeLanguage)
+                    } else {
+                        cur.referenceTranscript
+                    }
+                },
                 errorTitle = null,
                 errorDetail = null,
                 setupRequiredGuide = null,
             )
+        }
+        if (character.referenceAudioPath.isNullOrBlank() && packedReference == null) {
+            prepareAiVoiceCloudPack()
         }
     }
 
@@ -8401,12 +8413,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                     )
                 }
 
-                val sampleText = when (current.selectedLanguage) {
-                    AiVoiceLanguage.AR -> "مرحبا، هذا اختبار جاهزية الصوت."
-                    AiVoiceLanguage.EN -> "Hello, this is a voice readiness check."
-                    AiVoiceLanguage.TR -> "Merhaba, bu ses hazırlık kontrolüdür."
-                    AiVoiceLanguage.FA -> "سلام، این یک بررسی آمادگی صدا است."
-                }
+                val sampleText = aiVoiceCloudPackSampleText(current.selectedLanguage)
                 val request = AiVoiceSynthRequest(
                     engine = AiVoiceEngineKind.VOXCPM_2,
                     text = sampleText,
@@ -8526,7 +8533,23 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                     File(packDirectory, "voice_profiles.json").writeText(profiles.toString())
                 }
                 _aiVoiceUiState.update {
+                    val shouldAttachReference = it.selectedCharacterId == current.selectedCharacterId &&
+                        (
+                            it.referenceAudioPath.isNullOrBlank() ||
+                                isAiVoiceCloudPackReference(it.referenceAudioPath)
+                            )
                     it.copy(
+                        referenceAudioPath = if (shouldAttachReference) {
+                            referenceFile.absolutePath
+                        } else {
+                            it.referenceAudioPath
+                        },
+                        referenceAudioName = if (shouldAttachReference) {
+                            "VoxCPM2 ${current.selectedCharacterId}"
+                        } else {
+                            it.referenceAudioName
+                        },
+                        referenceTranscript = if (shouldAttachReference) sampleText else it.referenceTranscript,
                         isPreparingCloudVoicePack = false,
                         cloudVoicePackProgress = 1f,
                         cloudVoicePackStatus = if (isEnglish) {
@@ -8564,6 +8587,13 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                 _aiVoiceUiState.update { it.copy(isPreparingCloudVoicePack = false) }
             }
         }
+    }
+
+    private fun aiVoiceCloudPackSampleText(language: AiVoiceLanguage): String = when (language) {
+        AiVoiceLanguage.AR -> "مرحبا، هذا اختبار جاهزية الصوت."
+        AiVoiceLanguage.EN -> "Hello, this is a voice readiness check."
+        AiVoiceLanguage.TR -> "Merhaba, bu ses hazırlık kontrolüdür."
+        AiVoiceLanguage.FA -> "سلام، این یک بررسی آمادگی صدا است."
     }
 
     fun synthesizeAiVoiceSingle(overrideEngine: AiVoiceEngineKind? = null) {

@@ -225,8 +225,8 @@ fun AiVoiceOutputPlayerCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+                .padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -272,7 +272,7 @@ fun AiVoiceOutputPlayerCard(
                     text = state.lastOutputAppliedPrompt,
                     style = MaterialTheme.typography.bodySmall,
                     color = StudioColors.TextSecondary,
-                    maxLines = 2,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
@@ -305,7 +305,7 @@ fun AiVoiceOutputPlayerCard(
                     shape = RoundedCornerShape(10.dp),
                     modifier = Modifier
                         .weight(1.4f)
-                        .defaultMinSize(minHeight = 48.dp)
+                        .defaultMinSize(minHeight = 40.dp)
                         .testTag("ai_voice_play_pause_button"),
                 ) {
                     Icon(
@@ -327,7 +327,7 @@ fun AiVoiceOutputPlayerCard(
                     shape = RoundedCornerShape(10.dp),
                     modifier = Modifier
                         .weight(1f)
-                        .defaultMinSize(minHeight = 48.dp)
+                        .defaultMinSize(minHeight = 40.dp)
                         .testTag("ai_voice_replay_button"),
                 ) {
                     Icon(Icons.Rounded.Replay, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -337,7 +337,7 @@ fun AiVoiceOutputPlayerCard(
                 IconButton(
                     onClick = onStop,
                     modifier = Modifier
-                        .size(48.dp)
+                        .size(40.dp)
                         .testTag("ai_voice_stop_button"),
                 ) {
                     Icon(
@@ -357,7 +357,7 @@ fun AiVoiceOutputPlayerCard(
                     shape = RoundedCornerShape(10.dp),
                     modifier = Modifier
                         .weight(1f)
-                        .defaultMinSize(minHeight = 48.dp)
+                        .defaultMinSize(minHeight = 40.dp)
                         .testTag("ai_voice_save_wav_button"),
                 ) {
                     Icon(Icons.Rounded.Download, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -369,7 +369,7 @@ fun AiVoiceOutputPlayerCard(
                     shape = RoundedCornerShape(10.dp),
                     modifier = Modifier
                         .weight(1f)
-                        .defaultMinSize(minHeight = 48.dp)
+                        .defaultMinSize(minHeight = 40.dp)
                         .testTag("ai_voice_share_button"),
                 ) {
                     Icon(Icons.Rounded.Share, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -385,7 +385,7 @@ fun AiVoiceOutputPlayerCard(
                     shape = RoundedCornerShape(10.dp),
                     modifier = Modifier
                         .weight(1.3f)
-                        .defaultMinSize(minHeight = 48.dp)
+                        .defaultMinSize(minHeight = 40.dp)
                         .testTag("ai_voice_insert_studio_button"),
                 ) {
                     Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = null, modifier = Modifier.size(18.dp))

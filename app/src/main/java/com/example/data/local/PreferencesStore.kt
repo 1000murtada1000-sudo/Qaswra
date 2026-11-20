@@ -17,6 +17,8 @@ import com.example.model.StoredCustomPreset
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.builtins.SetSerializer
+import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 
 private val Context.studioPrefsDataStore: DataStore<Preferences> by preferencesDataStore(
@@ -30,6 +32,7 @@ class PreferencesStore(private val context: Context) {
     private val soundItemListSerializer = ListSerializer(OnlineSoundItem.serializer())
     private val soundHistoryListSerializer = ListSerializer(OnlineSoundHistoryItem.serializer())
     private val aiVoiceCharacterListSerializer = ListSerializer(AiVoiceCharacter.serializer())
+    private val aiVoiceFavoriteIdsSerializer = SetSerializer(String.serializer())
 
     companion object {
         private val KEY_LANGUAGE = stringPreferencesKey("language")
@@ -42,6 +45,7 @@ class PreferencesStore(private val context: Context) {
         private val KEY_FAVORITE_ONLINE_SOUNDS_JSON = stringPreferencesKey("favorite_online_sounds_json")
         private val KEY_ONLINE_SOUND_HISTORY_JSON = stringPreferencesKey("online_sound_history_json")
         private val KEY_AI_VOICE_CHARACTERS_JSON = stringPreferencesKey("ai_voice_characters_json")
+        private val KEY_AI_VOICE_FAVORITE_IDS_JSON = stringPreferencesKey("ai_voice_favorite_ids_json")
         private val KEY_AI_VOICE_BACKEND_URL = stringPreferencesKey("ai_voice_backend_url")
         private val KEY_AI_VOICE_BACKEND_BEARER = stringPreferencesKey("ai_voice_backend_bearer")
     }
@@ -115,6 +119,11 @@ class PreferencesStore(private val context: Context) {
         runCatching { json.decodeFromString(aiVoiceCharacterListSerializer, migrated) }.getOrDefault(emptyList())
     }
 
+    val favoriteAiVoiceCharacterIdsFlow: Flow<Set<String>> = context.studioPrefsDataStore.data.map { prefs ->
+        val raw = prefs[KEY_AI_VOICE_FAVORITE_IDS_JSON] ?: return@map emptySet()
+        runCatching { json.decodeFromString(aiVoiceFavoriteIdsSerializer, raw) }.getOrDefault(emptySet())
+    }
+
     val aiVoiceBackendUrlFlow: Flow<String> = context.studioPrefsDataStore.data.map { prefs ->
         prefs[KEY_AI_VOICE_BACKEND_URL].orEmpty()
     }
@@ -182,6 +191,12 @@ class PreferencesStore(private val context: Context) {
     suspend fun saveAiVoiceCharacters(characters: List<AiVoiceCharacter>) {
         context.studioPrefsDataStore.edit { prefs ->
             prefs[KEY_AI_VOICE_CHARACTERS_JSON] = json.encodeToString(aiVoiceCharacterListSerializer, characters)
+        }
+    }
+
+    suspend fun saveFavoriteAiVoiceCharacterIds(ids: Set<String>) {
+        context.studioPrefsDataStore.edit { prefs ->
+            prefs[KEY_AI_VOICE_FAVORITE_IDS_JSON] = json.encodeToString(aiVoiceFavoriteIdsSerializer, ids)
         }
     }
 

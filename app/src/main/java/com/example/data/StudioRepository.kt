@@ -50,6 +50,7 @@ class StudioRepository(private val context: Context) {
     val favoriteOnlineSoundsFlow: Flow<List<OnlineSoundItem>> = prefs.favoriteOnlineSoundsFlow
     val onlineListeningHistoryFlow: Flow<List<OnlineSoundHistoryItem>> = prefs.onlineListeningHistoryFlow
     val savedAiVoiceCharactersFlow: Flow<List<com.example.audio.aivoice.AiVoiceCharacter>> = prefs.savedAiVoiceCharactersFlow
+    val favoriteAiVoiceCharacterIdsFlow: Flow<Set<String>> = prefs.favoriteAiVoiceCharacterIdsFlow
     val aiVoiceBackendUrlFlow: Flow<String> = prefs.aiVoiceBackendUrlFlow
     val aiVoiceBackendBearerFlow: Flow<String> = prefs.aiVoiceBackendBearerFlow
 
@@ -122,6 +123,8 @@ class StudioRepository(private val context: Context) {
     suspend fun clearDefaultSaveFolder() = prefs.clearDefaultSaveFolder()
     suspend fun saveAiVoiceCharacters(characters: List<com.example.audio.aivoice.AiVoiceCharacter>) =
         prefs.saveAiVoiceCharacters(characters)
+    suspend fun saveFavoriteAiVoiceCharacterIds(ids: Set<String>) =
+        prefs.saveFavoriteAiVoiceCharacterIds(ids)
     suspend fun saveAiVoiceBackendUrl(url: String) = prefs.saveAiVoiceBackendUrl(url)
     suspend fun saveAiVoiceBackendBearer(token: String) = prefs.saveAiVoiceBackendBearer(token)
 
