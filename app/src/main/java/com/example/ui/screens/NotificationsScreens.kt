@@ -37,7 +37,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -72,10 +71,6 @@ fun NotificationsListScreen(
 ) {
     val lang = uiState.language
     val entries = uiState.diagnosticEntries
-
-    LaunchedEffect(Unit) {
-        viewModel.markDiagnosticsRead()
-    }
 
     StudioScrollColumn {
         StudioFocusTopBar(
@@ -141,7 +136,10 @@ fun NotificationsListScreen(
                 DiagnosticEntryCard(
                     entry = entry,
                     lang = lang,
-                    onClick = { onOpenDetail(entry.id) },
+                    onClick = {
+                        viewModel.markDiagnosticRead(entry.id)
+                        onOpenDetail(entry.id)
+                    },
                 )
             }
         }
@@ -273,6 +271,9 @@ fun NotificationDetailScreen(
     val entry = remember(entryId, uiState.diagnosticEntries) {
         uiState.diagnosticEntries.firstOrNull { it.id == entryId }
             ?: AppDiagnosticLog.findById(entryId)
+    }
+    LaunchedEffect(entryId) {
+        viewModel.markDiagnosticRead(entryId)
     }
     var copied by remember { mutableStateOf(false) }
 

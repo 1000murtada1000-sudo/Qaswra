@@ -1270,12 +1270,16 @@ fun SonixExitConfirmDialog(
     open: Boolean,
     language: AppLanguage,
     hasUnsavedChanges: Boolean = false,
+    hasAudio: Boolean = false,
+    isProcessing: Boolean = false,
+    isExporting: Boolean = false,
     onStay: () -> Unit,
     onConfirmExit: () -> Unit,
     onSaveToDraftsAndExit: () -> Unit = onConfirmExit,
 ) {
     if (!open) return
     val isEn = language == AppLanguage.EN
+    val hasPendingWork = hasUnsavedChanges || hasAudio || isProcessing || isExporting
     AlertDialog(
         onDismissRequest = onStay,
         containerColor = StudioColors.CardSurface,
@@ -1290,51 +1294,68 @@ fun SonixExitConfirmDialog(
             )
         },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    text = if (isEn) "Choose how to leave Sonix ✦." else "اختر كيفية مغادرة Sonix ✦.",
+                    text = if (isEn) {
+                        when {
+                            !hasPendingWork -> "Choose how to leave Sonix ✦."
+                            isProcessing || isExporting -> "An audio operation is still running. Choose what to do before leaving."
+                            else -> "You have audio or unsaved work. Choose what to do before leaving."
+                        }
+                    } else {
+                        when {
+                            !hasPendingWork -> "اختر كيفية مغادرة Sonix ✦."
+                            isProcessing || isExporting -> "هناك عملية صوتية جارية. اختر ما تريد فعله قبل المغادرة."
+                            else -> "لديك ملف صوتي أو تعديلات غير محفوظة. اختر ما تريد فعله قبل المغادرة."
+                        }
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = StudioColors.TextSecondary,
                 )
-                if (hasUnsavedChanges) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                if (hasPendingWork) {
+                    Button(
+                        onClick = onStay,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = StudioColors.Cyan,
+                            contentColor = StudioColors.BgTop,
+                        ),
+                        modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 40.dp).testTag("exit_dialog_stay_button"),
+                        shape = RoundedCornerShape(10.dp),
                     ) {
-                        Button(
-                            onClick = onSaveToDraftsAndExit,
-                            modifier = Modifier.weight(1f).defaultMinSize(minHeight = 52.dp),
-                            shape = RoundedCornerShape(12.dp),
-                        ) { Text(if (isEn) "Save draft" else "حفظ في المسودات والخروج", textAlign = androidx.compose.ui.text.style.TextAlign.Center) }
-                        OutlinedButton(
-                            onClick = onConfirmExit,
-                            modifier = Modifier.weight(1f).defaultMinSize(minHeight = 52.dp),
-                            shape = RoundedCornerShape(12.dp),
-                            border = BorderStroke(1.dp, StudioColors.RoseBright.copy(alpha = 0.75f)),
-                        ) { Text(if (isEn) "Exit" else "خروج بدون حفظ", textAlign = androidx.compose.ui.text.style.TextAlign.Center, color = StudioColors.RoseBright) }
-                        OutlinedButton(
-                            onClick = onStay,
-                            modifier = Modifier.weight(1f).defaultMinSize(minHeight = 52.dp),
-                            shape = RoundedCornerShape(12.dp),
-                            border = BorderStroke(1.dp, StudioColors.Cyan.copy(alpha = 0.65f)),
-                        ) { Text(if (isEn) "Stay" else "البقاء", textAlign = androidx.compose.ui.text.style.TextAlign.Center, color = StudioColors.Cyan) }
+                        Text(if (isEn) "Return to app" else "الرجوع للتطبيق")
+                    }
+                    OutlinedButton(
+                        onClick = onSaveToDraftsAndExit,
+                        modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 40.dp).testTag("exit_dialog_save_draft_button"),
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(1.dp, StudioColors.BorderBright),
+                    ) {
+                        Text(if (isEn) "Save as draft" else "حفظ كمسودة", color = StudioColors.TextPrimary)
+                    }
+                    OutlinedButton(
+                        onClick = onConfirmExit,
+                        modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 40.dp).testTag("exit_dialog_confirm_button"),
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(1.dp, StudioColors.RoseBright.copy(alpha = 0.6f)),
+                    ) {
+                        Text(if (isEn) "Discard and exit" else "إلغاء وخروج", color = StudioColors.RoseBright)
                     }
                 }
             }
         },
         confirmButton = {
-            if (!hasUnsavedChanges) {
+            if (!hasPendingWork) {
                 Button(
                     onClick = onConfirmExit,
                     colors = ButtonDefaults.buttonColors(containerColor = StudioColors.RoseBright, contentColor = StudioColors.BgTop),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("exit_dialog_confirm_button"),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.defaultMinSize(minHeight = 40.dp).testTag("exit_dialog_confirm_button"),
                 ) { Text(if (isEn) "Exit" else "خروج", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)) }
             } else Unit
         },
         dismissButton = {
-            if (!hasUnsavedChanges) OutlinedButton(onClick = onStay, border = BorderStroke(1.dp, StudioColors.Cyan.copy(alpha = 0.6f)),
-                shape = RoundedCornerShape(12.dp), modifier = Modifier.defaultMinSize(minHeight = 48.dp).testTag("exit_dialog_stay_button")) {
+            if (!hasPendingWork) OutlinedButton(onClick = onStay, border = BorderStroke(1.dp, StudioColors.Cyan.copy(alpha = 0.6f)),
+                shape = RoundedCornerShape(10.dp), modifier = Modifier.defaultMinSize(minHeight = 40.dp).testTag("exit_dialog_stay_button")) {
                 Text(if (isEn) "Stay" else "البقاء", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold), color = StudioColors.Cyan)
             } else Unit
         },

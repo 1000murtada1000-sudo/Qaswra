@@ -13,6 +13,7 @@ import com.example.audio.ai.OnlineSoundHistoryItem
 import com.example.audio.ai.OnlineSoundItem
 import com.example.model.AppLanguage
 import com.example.model.AuthSession
+import com.example.model.CloudDraft
 import com.example.model.DspConfig
 import com.example.model.RecordingSourceType
 import com.example.model.SavedAssistantChatSession
@@ -99,6 +100,7 @@ class StudioRepository(private val context: Context) {
                 config = item.config.normalized(),
             )
         }
+
         val prefIds = fromPrefs.map { it.id }.toSet()
         val fromDb = dbList.filter { it.id !in prefIds }.map { entity ->
             val cfg = runCatching {
@@ -114,6 +116,15 @@ class StudioRepository(private val context: Context) {
         }
         fromPrefs + fromDb
     }
+
+    fun localCloudDraftsFlow(userId: String): Flow<List<CloudDraft>> =
+        prefs.localCloudDraftsFlow(userId)
+
+    suspend fun saveLocalCloudDraft(userId: String, draft: CloudDraft) =
+        prefs.saveLocalCloudDraft(userId, draft)
+
+    suspend fun removeLocalCloudDraft(userId: String, draftId: String) =
+        prefs.removeLocalCloudDraft(userId, draftId)
 
     suspend fun saveLanguage(lang: AppLanguage) = prefs.saveLanguage(lang)
     suspend fun saveAutoLoop(enabled: Boolean) = prefs.saveAutoLoop(enabled)

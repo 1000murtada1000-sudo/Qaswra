@@ -86,6 +86,8 @@ object SonixCrashGuard {
         }
     }
 
+    fun isAppInForeground(): Boolean = foregroundActivityRef?.get() != null
+
     fun consumePendingCrashDiagnostics(context: Context): String? {
         return runCatching {
             val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)

@@ -1,18 +1,26 @@
 package com.example.viewmodel
 
 import android.app.Application
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.Manifest
 import android.content.Intent
 import android.net.Uri
+import android.content.pm.PackageManager
+import android.os.Build
 import android.provider.DocumentsContract
 import android.util.Log
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.Immutable
+import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.credentials.ClearCredentialStateRequest
 import androidx.credentials.CredentialManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.BuildConfig
+import com.example.SonixCrashGuard
 import com.example.audio.AudioDecodeOutcome
 import com.example.audio.AudioDecoder
 import com.example.audio.AudioFileUploader
@@ -313,6 +321,10 @@ data class StudioUiState(
     val importBytesLabel: String? = null,
     val importBytesProgress: Float? = null,
     val exportProgress: Float? = null,
+    val isExporting: Boolean = false,
+    val exportComplete: Boolean = false,
+    val exportFileName: String? = null,
+    val exportSaveLocation: String? = null,
     val purifyProgress: Float? = null,
     val ttsEngineMode: TtsEngineMode = TtsEngineMode.VOX_NEURAL_ONLINE,
     val studioLuxuryEnhancement: Boolean = true,
@@ -529,24 +541,56 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     private inline fun launchSingleFlightProcessing(
         purifyInitProgress: Float? = null,
         exportInitProgress: Float? = null,
+        trackExport: Boolean = false,
+        notifyCompletion: Boolean = true,
         crossinline block: suspend () -> Unit,
     ) {
-        if (!processingMutex.tryLock()) return
+        if (!processingMutex.tryLock()) {
+            if (trackExport) cancelExportTracking()
+            return
+        }
         try {
             viewModelScope.launch(safeCoroutineHandler) {
+                val bannerBefore = _uiState.value.statusBanner
+                val bannerRepeatCountBefore = _uiState.value.statusBannerRepeatCount
                 _uiState.update {
                     it.copy(
                         isBusy = true,
                         isProcessing = true,
                         purifyProgress = purifyInitProgress ?: it.purifyProgress,
                         exportProgress = exportInitProgress ?: it.exportProgress,
+                        isExporting = if (trackExport) true else it.isExporting,
+                        exportComplete = if (trackExport) false else it.exportComplete,
+                        exportSaveLocation = if (trackExport) null else it.exportSaveLocation,
                     )
                 }
                 try {
                     block()
+                    val completedBanner = _uiState.value.statusBanner
+                    if (
+                        notifyCompletion &&
+                        completedBanner != null &&
+                        (
+                            completedBanner != bannerBefore ||
+                                _uiState.value.statusBannerRepeatCount != bannerRepeatCountBefore
+                            ) &&
+                        (
+                            completedBanner.startsWith("تم") ||
+                                completedBanner.startsWith("اكتمل") ||
+                                completedBanner.startsWith("اكتملت") ||
+                                completedBanner.startsWith("Saved", ignoreCase = true) ||
+                                completedBanner.startsWith("Completed", ignoreCase = true)
+                            )
+                    ) {
+                        notifyAudioCompletionIfBackground(
+                            title = if (_uiState.value.language == AppLanguage.EN) "Audio operation complete" else "اكتملت معالجة الصوت",
+                            message = completedBanner,
+                        )
+                    }
                 } catch (ce: CancellationException) {
                     throw ce
                 } catch (t: Throwable) {
+                    if (trackExport) cancelExportTracking()
                     AppDiagnosticLog.logRecoverable(
                         toolName = "AudioProcessing",
                         titleAr = "تعذر إكمال المعالجة الصوتية",
@@ -563,12 +607,19 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                         ),
                     )
                 } finally {
+                    if (trackExport && pendingExportResult == null && !_uiState.value.exportComplete) {
+                        cancelExportTracking()
+                    }
                     _uiState.update {
                         it.copy(
                             isBusy = false,
                             isProcessing = false,
                             purifyProgress = null,
-                            exportProgress = null,
+                            exportProgress = if (trackExport && (_uiState.value.isExporting || _uiState.value.exportComplete)) {
+                                _uiState.value.exportProgress ?: 0f
+                            } else {
+                                null
+                            },
                         )
                     }
                     runCatching { if (processingMutex.isLocked) processingMutex.unlock() }
@@ -588,6 +639,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     private var batchProcessingJob: Job? = null
     private var cloudPresetsJob: Job? = null
     private var cloudDraftsJob: Job? = null
+    private var localCloudDraftsJob: Job? = null
     private var aiVoiceSynthJob: Job? = null
     private var aiVoiceReferenceImportJob: Job? = null
     private var pendingExportResult: ExportedAudioResult? = null
@@ -599,6 +651,8 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
 
     private val cloudPresetsFlow = MutableStateFlow<List<StudioPreset>>(emptyList())
     private val cloudDraftsFlow = MutableStateFlow<List<CloudDraft>>(emptyList())
+    private val remoteCloudDraftsFlow = MutableStateFlow<List<CloudDraft>>(emptyList())
+    private val localCloudDraftsFlow = MutableStateFlow<List<CloudDraft>>(emptyList())
     private val isCloudSyncedFlow = MutableStateFlow(false)
 
     private val authStateListener = FirebaseAuth.AuthStateListener { auth ->
@@ -867,10 +921,14 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         cloudPresetsJob = null
         cloudDraftsJob?.cancel()
         cloudDraftsJob = null
+        localCloudDraftsJob?.cancel()
+        localCloudDraftsJob = null
 
         if (uid.isNullOrBlank()) {
             isCloudSyncedFlow.value = false
             cloudPresetsFlow.value = emptyList()
+            remoteCloudDraftsFlow.value = emptyList()
+            localCloudDraftsFlow.value = emptyList()
             cloudDraftsFlow.value = emptyList()
             return
         }
@@ -887,6 +945,12 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                     cloudPresetsFlow.value = list
                 }
         }
+        localCloudDraftsJob = viewModelScope.launch(safeCoroutineHandler) {
+            repository.localCloudDraftsFlow(uid).collect { list ->
+                localCloudDraftsFlow.value = list
+                publishCloudDrafts()
+            }
+        }
         cloudDraftsJob = viewModelScope.launch(safeCoroutineHandler) {
             firestoreRepo.observeDrafts(uid)
                 .catch { err ->
@@ -895,9 +959,17 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                     postBanner(t(_uiState.value.language, "cloud_sync_load_error"))
                 }
                 .collect { list ->
-                    cloudDraftsFlow.value = list
+                    remoteCloudDraftsFlow.value = list
+                    publishCloudDrafts()
                 }
         }
+    }
+
+    private fun publishCloudDrafts() {
+        val remote = remoteCloudDraftsFlow.value
+        val remoteIds = remote.mapTo(HashSet()) { it.docId }
+        cloudDraftsFlow.value = (remote + localCloudDraftsFlow.value.filterNot { it.docId in remoteIds })
+            .sortedByDescending { it.updatedAtMs }
     }
 
     private data class LocalDbSnapshot(
@@ -935,6 +1007,99 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             delay(4200L)
             _uiState.update { it.copy(statusBanner = null) }
         }
+    }
+
+    private fun beginExportTracking(fileName: String) {
+        _uiState.update {
+            it.copy(
+                isExporting = true,
+                exportComplete = false,
+                exportProgress = 0f,
+                exportFileName = fileName,
+                exportSaveLocation = null,
+            )
+        }
+    }
+
+    private fun updateExportProgress(progress: Float) {
+        _uiState.update {
+            if (it.isExporting) it.copy(exportProgress = progress.coerceIn(0f, 1f)) else it
+        }
+    }
+
+    private fun completeExportTracking(fileName: String, destination: String) {
+        pendingExportResult = null
+        pendingSuggestedFileName = null
+        _uiState.update {
+            it.copy(
+                isExporting = false,
+                exportComplete = true,
+                exportProgress = 1f,
+                exportFileName = fileName,
+                exportSaveLocation = destination,
+            )
+        }
+        notifyAudioCompletionIfBackground(
+            title = if (_uiState.value.language == AppLanguage.EN) "Audio export complete" else "اكتمل حفظ وتصدير الملف الصوتي بنجاح",
+            message = "$fileName — $destination",
+        )
+    }
+
+    private fun cancelExportTracking() {
+        pendingExportResult = null
+        pendingSuggestedFileName = null
+        _uiState.update {
+            it.copy(
+                isExporting = false,
+                exportComplete = false,
+                exportProgress = null,
+                exportFileName = null,
+                exportSaveLocation = null,
+            )
+        }
+    }
+
+    fun dismissExportStatus() {
+        if (_uiState.value.exportComplete) cancelExportTracking()
+    }
+
+    private fun notifyAudioCompletionIfBackground(title: String, message: String) {
+        if (SonixCrashGuard.isAppInForeground()) return
+        val app = getApplication<Application>()
+        if (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(app, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) return
+        val manager = app.getSystemService(NotificationManager::class.java) ?: return
+        val channelId = "sonix_audio_operations"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            manager.createNotificationChannel(
+                NotificationChannel(
+                    channelId,
+                    if (_uiState.value.language == AppLanguage.EN) "Sonix audio operations" else "عمليات Sonix الصوتية",
+                    NotificationManager.IMPORTANCE_DEFAULT,
+                ).apply {
+                    description = if (_uiState.value.language == AppLanguage.EN) {
+                        "Audio export and processing completion alerts"
+                    } else {
+                        "تنبيهات اكتمال حفظ الملفات ومعالجتها صوتياً"
+                    }
+                },
+            )
+        }
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(app, channelId)
+        } else {
+            Notification.Builder(app)
+        }
+        val notification = builder
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setContentTitle(title)
+            .setContentText(message.take(180))
+            .setStyle(Notification.BigTextStyle().bigText(message.take(500)))
+            .setAutoCancel(true)
+            .build()
+        manager.notify(System.currentTimeMillis().toInt(), notification)
     }
 
     fun clearBanner() {
@@ -2950,7 +3115,12 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             )
             return
         }
-        launchSingleFlightProcessing(exportInitProgress = 0.08f) {
+        beginExportTracking(fileName)
+        launchSingleFlightProcessing(
+            exportInitProgress = 0.08f,
+            trackExport = true,
+            notifyCompletion = false,
+        ) {
             val bgVol = _uiState.value.smartMixBgVolume
             val res: ExportedAudioResult = if (voice != null && music != null) {
                 val mixed = withContext(Dispatchers.Default) {
@@ -3023,6 +3193,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                         targetPackage = targetPackage,
                     ),
                 )
+                completeExportTracking(res.file.name, if (_uiState.value.language == AppLanguage.EN) "Share" else "مشاركة")
             } else {
                 val cleanName = fileName.trim().replace(Regex("[\\\\/:*?\"<>|]"), "_").ifEmpty { "Sonix_Smart_Mix" }
                 dispatchSaveToDevice(res, "$cleanName.${res.extension}")
@@ -3662,21 +3833,36 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun saveCloudDraft(draftName: String) {
+    fun saveCloudDraft(draftName: String, onComplete: (Boolean) -> Unit = {}) {
         val cleanName = draftName.trim()
-        if (cleanName.isBlank()) return
+        if (cleanName.isBlank()) {
+            onComplete(false)
+            return
+        }
         val uid = runCatching { Firebase.auth.currentUser?.uid }.getOrNull()
         val lang = _uiState.value.language
         if (uid.isNullOrBlank()) {
             postBanner(t(lang, "cloud_drafts_signin_hint"))
+            onComplete(false)
             return
         }
         if (_uiState.value.isCloudSyncing) {
             postBanner(if (lang == AppLanguage.EN) "A cloud sync is already in progress." else "تجري مزامنة سحابية أخرى حالياً")
+            onComplete(false)
             return
         }
         val st = _uiState.value
         val presetName = st.selectedPresetLabel.ifBlank { st.activeProjectName }
+        val draftId = st.activeCloudDraftId ?: UUID.randomUUID().toString()
+        val draft = CloudDraft(
+            docId = draftId,
+            name = cleanName,
+            selectedPresetName = presetName,
+            durationMs = st.durationMs,
+            sampleRate = activeBuffer?.sampleRate ?: activeSourceSampleRate,
+            config = st.dspConfig,
+            updatedAtMs = System.currentTimeMillis(),
+        )
         viewModelScope.launch(safeCoroutineHandler) {
             _uiState.update {
                 it.copy(
@@ -3687,31 +3873,73 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             }
             postBanner(if (lang == AppLanguage.EN) "Saving project to cloud..." else "جاري حفظ المشروع في السحابة...")
             try {
-                val res = runCatching {
-                    firestoreRepo.saveDraft(
-                        userId = uid,
-                        existingDraftId = st.activeCloudDraftId,
-                        name = cleanName,
-                        selectedPresetName = presetName,
-                        durationMs = st.durationMs,
-                        sampleRate = activeBuffer?.sampleRate ?: 44100,
-                        config = st.dspConfig,
-                    )
-                }.getOrElse { Result.failure(it) }
-                if (res.isSuccess) {
-                    val newDocId = res.getOrNull()
+                repository.saveLocalCloudDraft(uid, draft)
+                localCloudDraftsFlow.value =
+                    (listOf(draft) + localCloudDraftsFlow.value.filterNot { it.docId == draftId }).take(100)
+                publishCloudDrafts()
+                _uiState.update { state ->
+                    if (state.activeCloudDraftId == null) state.copy(activeCloudDraftId = draftId) else state
+                }
+
+                var res: Result<String>? = null
+                for (attempt in 0 until 3) {
+                    res = runCatching {
+                        firestoreRepo.saveDraft(
+                            userId = uid,
+                            existingDraftId = st.activeCloudDraftId,
+                            draftId = draftId,
+                            name = cleanName,
+                            selectedPresetName = presetName,
+                            durationMs = st.durationMs,
+                            sampleRate = draft.sampleRate,
+                            config = st.dspConfig,
+                        )
+                    }.getOrElse { Result.failure(it) }
+                    if (res.isSuccess) break
+                    if (attempt < 2) delay(500L shl attempt)
+                }
+
+                if (res?.isSuccess == true) {
+                    val localBackupRemoved = runCatching {
+                        repository.removeLocalCloudDraft(uid, draftId)
+                    }.onFailure { error ->
+                        Log.w("CloudSync", "Cloud draft is confirmed, but local backup cleanup failed", error)
+                    }.isSuccess
+                    if (localBackupRemoved) {
+                        localCloudDraftsFlow.value = localCloudDraftsFlow.value.filterNot { it.docId == draftId }
+                        publishCloudDrafts()
+                    }
+                    remoteCloudDraftsFlow.value =
+                        (listOf(draft) + remoteCloudDraftsFlow.value.filterNot { it.docId == draftId })
+                    publishCloudDrafts()
                     _uiState.update {
                         it.copy(
-                            activeCloudDraftId = newDocId ?: it.activeCloudDraftId,
+                            activeCloudDraftId = draftId,
                             activeProjectName = cleanName,
                             hasUnsavedChanges = false,
                         )
                     }
-                    postBanner(t(lang, "draft_saved_success"))
+                    postBanner("محفوظ ومؤمّن في السحابة 100% ✓")
+                    notifyAudioCompletionIfBackground(
+                        title = if (lang == AppLanguage.EN) "Cloud draft saved" else "اكتمل حفظ المسودة السحابية",
+                        message = cleanName,
+                    )
+                    onComplete(true)
                 } else {
-                    Log.w("CloudSync", "Cloud draft save warning", res.exceptionOrNull())
-                    postBanner(t(lang, "cloud_sync_save_error"))
+                    Log.w("CloudSync", "Cloud draft save warning", res?.exceptionOrNull())
+                    postBanner(
+                        if (lang == AppLanguage.EN) {
+                            "Draft saved locally; cloud sync will retry when available."
+                        } else {
+                            "حُفظت المسودة محلياً، وستُعاد مزامنتها عند توفر الاتصال."
+                        },
+                    )
+                    onComplete(false)
                 }
+            } catch (error: Exception) {
+                Log.e("CloudSync", "Local draft backup failed", error)
+                postBanner(if (lang == AppLanguage.EN) "Could not secure the local draft." else "تعذر حفظ النسخة الاحتياطية المحلية.")
+                onComplete(false)
             } finally {
                 _uiState.update {
                     it.copy(isBusy = false, isCloudSyncing = false, cloudSyncLabel = "")
@@ -3764,6 +3992,12 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                     if (_uiState.value.activeCloudDraftId == draftId) {
                         _uiState.update { it.copy(activeCloudDraftId = null) }
                     }
+                    val uid = Firebase.auth.currentUser?.uid
+                    if (!uid.isNullOrBlank()) {
+                        repository.removeLocalCloudDraft(uid, draftId)
+                        localCloudDraftsFlow.value = localCloudDraftsFlow.value.filterNot { it.docId == draftId }
+                        publishCloudDrafts()
+                    }
                     postBanner("تم حذف المسودة السحابية")
                 } else {
                     Log.w("CloudSync", "Cloud draft delete warning", res.exceptionOrNull())
@@ -3792,7 +4026,8 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             postBanner("لا يوجد صوت لتصديره حالياً")
             return
         }
-        launchSingleFlightProcessing(exportInitProgress = 0.05f) {
+        beginExportTracking(fileName)
+        launchSingleFlightProcessing(exportInitProgress = 0.05f, trackExport = true, notifyCompletion = false) {
             val res: ExportedAudioResult = if (src != null) {
                 val cfg = _uiState.value.dspConfig
                 val rendered = withContext(Dispatchers.Default) {
@@ -3819,6 +4054,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                     dspConfig = _uiState.value.dspConfig,
                 ) ?: run {
                     postBanner("تعذر تصدير الملف الكبير عبر FFmpeg")
+                    cancelExportTracking()
                     return@launchSingleFlightProcessing
                 }
                 _uiState.update { it.copy(exportProgress = 1.0f) }
@@ -3841,6 +4077,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                         targetPackage = targetPackage,
                     ),
                 )
+                completeExportTracking(res.file.name, if (_uiState.value.language == AppLanguage.EN) "Share" else "مشاركة")
             } else {
                 val cleanName = fileName.trim().replace(Regex("[\\\\/:*?\"<>|]"), "_").ifEmpty { "Sonix_Export" }
                 dispatchSaveToDevice(res, "$cleanName.${res.extension}")
@@ -3857,6 +4094,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             postBanner("لا يوجد صوت لتصديره لمحرك Unity حالياً")
             return
         }
+        beginExportTracking(assetName.ifBlank { "SonixGameAudio" })
         viewModelScope.launch {
             _uiState.update { it.copy(isBusy = true, exportProgress = 0.08f) }
             try {
@@ -3885,6 +4123,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                 )
                 if (bundle == null) {
                     postBanner("تعذر توليد حزمة الصوت لمحرك Unity")
+                    cancelExportTracking()
                     return@launch
                 }
                 _uiState.update { it.copy(exportProgress = 1.0f) }
@@ -3906,19 +4145,43 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                         ),
                     )
                     postBanner("تم تجهيز ملف الصوت (${bundle.wavFile.name}) وسكربت (${bundle.csharpScriptFile.name}) لمحرك Unity")
+                    completeExportTracking(fileToSave.name, if (_uiState.value.language == AppLanguage.EN) "Shared" else "تمت المشاركة")
                 } else {
                     dispatchSaveToDevice(res, fileToSave.name)
                     postBanner("تم تجهيز حزمة Unity 48kHz (${bundle.wavFile.name} + ${bundle.csharpScriptFile.name})")
                 }
-            } catch (_: Throwable) {
+            } catch (error: CancellationException) {
+                cancelExportTracking()
+                throw error
+            } catch (error: Exception) {
+                Log.e("AudioExport", "Failed to export Unity audio bundle", error)
+                AppDiagnosticLog.logRecoverable(
+                    toolName = "UnityExport",
+                    titleAr = "تعذر تصدير حزمة الصوت لمحرك Unity",
+                    titleEn = "Unity audio export failed",
+                    causeAr = error.localizedMessage ?: error.javaClass.simpleName,
+                    causeEn = error.localizedMessage ?: error.javaClass.simpleName,
+                    throwable = error,
+                )
                 postBanner("تعذر تصدير حزمة محرك الألعاب Unity")
+                cancelExportTracking()
             } finally {
-                _uiState.update { it.copy(isBusy = false, exportProgress = null) }
+                if (pendingExportResult == null && !_uiState.value.exportComplete) {
+                    cancelExportTracking()
+                }
+                _uiState.update {
+                    it.copy(
+                        isBusy = false,
+                        exportProgress = if (it.isExporting) it.exportProgress ?: 0f else null,
+                    )
+                }
             }
         }
     }
 
     private fun dispatchSaveToDevice(result: ExportedAudioResult, suggestedName: String) {
+        if (!_uiState.value.isExporting) beginExportTracking(suggestedName)
+        updateExportProgress(0f)
         pendingExportResult = result
         pendingSuggestedFileName = suggestedName
         val treeUriStr = defaultSaveTreeUriString
@@ -3929,8 +4192,6 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) {
             val ok = writeResultToTreeFolder(result, suggestedName, treeUriStr)
             if (ok) {
-                pendingExportResult = null
-                pendingSuggestedFileName = null
                 val folderLabel = _uiState.value.defaultSaveFolderName ?: "Default Folder"
                 val msg = if (_uiState.value.language == AppLanguage.EN) {
                     "Saved ${result.extension.uppercase()} to $folderLabel"
@@ -3938,7 +4199,9 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                     "تم حفظ الملف (${result.extension.uppercase()}) تلقائياً في: $folderLabel"
                 }
                 postBanner(msg)
+                completeExportTracking(suggestedName, folderLabel)
             } else {
+                updateExportProgress(0f)
                 _sideEffects.tryEmit(StudioSideEffect.PromptSaveDocument(result, suggestedName))
             }
         }
@@ -3976,15 +4239,15 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                     writeResultToTreeFolder(pending, suggested, treeUri.toString())
                 }
                 if (ok) {
-                    pendingExportResult = null
-                    pendingSuggestedFileName = null
                     val msg = if (_uiState.value.language == AppLanguage.EN) {
                         "Default save folder set ($folderName) & file saved"
                     } else {
                         "تم تعيين المجلد ($folderName) وحفظ الملف بنجاح"
                     }
                     postBanner(msg)
+                    completeExportTracking(suggested ?: pending.file.name, folderName)
                 } else {
+                    updateExportProgress(0f)
                     _sideEffects.tryEmit(StudioSideEffect.PromptSaveDocument(pending, suggested))
                 }
             } else {
@@ -4015,28 +4278,87 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             suggestedName,
         ) ?: return@runCatching false
 
-        cr.openOutputStream(createdUri)?.use { out ->
-            result.file.inputStream().use { inp -> inp.copyTo(out) }
-        } ?: return@runCatching false
+        try {
+            val out = cr.openOutputStream(createdUri)
+            if (out == null) {
+                DocumentsContract.deleteDocument(cr, createdUri)
+                return@runCatching false
+            }
+            out.use { copyExportBytes(result, it) }
+        } catch (error: Exception) {
+            runCatching { DocumentsContract.deleteDocument(cr, createdUri) }
+            throw error
+        }
         true
-    }.getOrDefault(false)
+    }.onFailure { Log.w("AudioExport", "Failed to write exported audio to selected folder", it) }
+        .getOrDefault(false)
 
     fun completeSaveExportedDocument(destinationUri: Uri?) {
         val result = pendingExportResult ?: return
-        pendingExportResult = null
-        pendingSuggestedFileName = null
-        if (destinationUri == null) return
+        val suggestedName = pendingSuggestedFileName ?: result.file.name
+        if (destinationUri == null) {
+            pendingExportResult = null
+            pendingSuggestedFileName = null
+            cancelExportTracking()
+            return
+        }
+        updateExportProgress(0f)
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
-                getApplication<Application>().contentResolver.openOutputStream(destinationUri)?.use { out ->
-                    result.file.inputStream().use { inp -> inp.copyTo(out) }
+                val out = getApplication<Application>().contentResolver.openOutputStream(destinationUri)
+                    ?: throw IllegalStateException("Could not open the selected destination")
+                out.use { copyExportBytes(result, it) }
+                val displayName = queryDisplayName(destinationUri) ?: suggestedName
+                val location = querySaveLocation(destinationUri) ?: _uiState.value.defaultSaveFolderName ?: if (_uiState.value.language == AppLanguage.EN) {
+                    "Selected location"
+                } else {
+                    "الموقع الذي اخترته"
                 }
                 postBanner("تم حفظ الملف بصيغة ${result.extension.uppercase()} بنجاح")
-            }.onFailure {
+                completeExportTracking(displayName, location)
+            }.onFailure { error ->
+                Log.e("AudioExport", "Failed saving exported audio document", error)
+                pendingExportResult = null
+                pendingSuggestedFileName = null
+                cancelExportTracking()
                 postBanner("تعذر حفظ الملف في الموقع المحدد")
             }
         }
     }
+
+    private fun copyExportBytes(result: ExportedAudioResult, output: java.io.OutputStream) {
+        val totalBytes = result.file.length().coerceAtLeast(1L)
+        val buffer = ByteArray(32 * 1024)
+        var copied = 0L
+        updateExportProgress(0f)
+        result.file.inputStream().buffered().use { input ->
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                output.write(buffer, 0, count)
+                copied += count
+                updateExportProgress((copied.toFloat() / totalBytes).coerceIn(0f, 1f))
+            }
+        }
+        output.flush()
+        updateExportProgress(1f)
+    }
+
+    private fun queryDisplayName(uri: Uri): String? =
+        getApplication<Application>().contentResolver.query(
+            uri,
+            arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) cursor.getString(0)?.takeIf { it.isNotBlank() } else null
+        }
+
+    private fun querySaveLocation(uri: Uri): String? = runCatching {
+        val documentId = DocumentsContract.getDocumentId(uri)
+        documentId.substringAfter(':', documentId).substringBeforeLast('/').takeIf { it.isNotBlank() }
+    }.getOrNull()
 
     // AI Studio — Hybrid: uses Gemini API when BuildConfig.GEMINI_API_KEY is present, otherwise Sherpa-ONNX / Local Engines seamlessly
     fun transcribeActiveAudio() {
@@ -4887,7 +5209,12 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
         stopToolPreview()
-        launchSingleFlightProcessing(exportInitProgress = 0.1f) {
+        beginExportTracking(fileName)
+        launchSingleFlightProcessing(
+            exportInitProgress = 0.1f,
+            trackExport = true,
+            notifyCompletion = false,
+        ) {
             val res: ExportedAudioResult = if (primary != null && secondary != null) {
                 val combined = executeUnifiedMergeOverlay(getApplication(), primary, secondary, params)
                 val finalBuf = withContext(Dispatchers.Default) { renderOfflineDsp(combined, _uiState.value.dspConfig) }
@@ -4966,6 +5293,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                 val app = getApplication<Application>()
                 val uri = FileProvider.getUriForFile(app, "${app.packageName}.fileprovider", res.file)
                 _sideEffects.tryEmit(StudioSideEffect.LaunchShareIntent(uri, res.mimeType, res.file.name, targetPackage))
+                completeExportTracking(res.file.name, if (_uiState.value.language == AppLanguage.EN) "Share" else "مشاركة")
             } else {
                 val cleanName = fileName.trim().replace(Regex("[\\\\/:*?\"<>|]"), "_").ifEmpty { "Sonix_Merge_Studio" }
                 dispatchSaveToDevice(res, "$cleanName.${res.extension}")
@@ -5245,6 +5573,10 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         return cur
     }
 
+    fun markDiagnosticRead(id: String) {
+        AppDiagnosticLog.markRead(id)
+    }
+
     fun markDiagnosticsRead() {
         AppDiagnosticLog.markAllRead()
     }
@@ -5333,7 +5665,12 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             postBanner("لا يوجد صوت لضغطه حالياً")
             return
         }
-        launchSingleFlightProcessing(exportInitProgress = 0.1f) {
+        beginExportTracking(fileName)
+        launchSingleFlightProcessing(
+            exportInitProgress = 0.1f,
+            trackExport = true,
+            notifyCompletion = false,
+        ) {
             val res: ExportedAudioResult = if (src != null) {
                 val rendered = withContext(Dispatchers.Default) {
                     renderOfflineDsp(src, _uiState.value.dspConfig)
@@ -5366,6 +5703,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                 val app = getApplication<Application>()
                 val uri = FileProvider.getUriForFile(app, "${app.packageName}.fileprovider", res.file)
                 _sideEffects.tryEmit(StudioSideEffect.LaunchShareIntent(uri, res.mimeType, res.file.name))
+                completeExportTracking(res.file.name, if (_uiState.value.language == AppLanguage.EN) "Share" else "مشاركة")
             } else {
                 val cleanName = fileName.trim().replace(Regex("[\\\\/:*?\"<>|]"), "_").ifEmpty { "Sonix_${bitrateKbps}k" }
                 dispatchSaveToDevice(res, "$cleanName.${res.extension}")
@@ -8444,6 +8782,10 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                     )
                 }
                 postBanner("تم توليد المقطع الصوتي بنجاح (${formatDurationMs(outcome.durationMs)})")
+                notifyAudioCompletionIfBackground(
+                    title = if (isEn) "Audio generation complete" else "اكتمل توليد المقطع الصوتي",
+                    message = File(outcome.audioFilePath).name,
+                )
             }
             is AiVoiceSynthOutcome.ConfigurationRequired -> {
                 _aiVoiceUiState.update {

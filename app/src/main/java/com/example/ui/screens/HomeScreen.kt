@@ -184,7 +184,9 @@ fun HomeScreen(
     var activeToolInfo by remember { mutableStateOf<Pair<String, String>?>(null) }
     var exitConfirmDialogOpen by remember { mutableStateOf(false) }
 
-    BackHandler(enabled = true) {
+    BackHandler(
+        enabled = uiState.hasAudio || uiState.hasUnsavedChanges || uiState.isProcessing || uiState.isBusy || uiState.isExporting,
+    ) {
         exitConfirmDialogOpen = true
     }
 
@@ -500,7 +502,6 @@ fun HomeScreen(
 
                             val bellInteraction = remember { MutableInteractionSource() }
                             val badgeCount = uiState.unreadDiagnosticCount
-                            val totalCount = uiState.diagnosticEntries.size
                             IconButton(
                                 onClick = onOpenNotifications,
                                 interactionSource = bellInteraction,
@@ -515,13 +516,13 @@ fun HomeScreen(
                             ) {
                                 BadgedBox(
                                     badge = {
-                                        if (badgeCount > 0 || totalCount > 0) {
+                                        if (badgeCount > 0) {
                                             Badge(
-                                                containerColor = if (badgeCount > 0) StudioColors.RoseBright else StudioColors.Amber,
+                                                containerColor = StudioColors.RoseBright,
                                                 contentColor = StudioColors.BgTop,
                                             ) {
                                                 Text(
-                                                    text = (if (badgeCount > 0) badgeCount else totalCount).coerceAtMost(99).toString(),
+                                                    text = badgeCount.coerceAtMost(99).toString(),
                                                     style = MaterialTheme.typography.labelSmall.copy(
                                                         fontWeight = FontWeight.ExtraBold,
                                                         fontSize = 10.sp,
@@ -1091,11 +1092,17 @@ fun HomeScreen(
         open = exitConfirmDialogOpen,
         language = lang,
         hasUnsavedChanges = uiState.hasUnsavedChanges,
+        hasAudio = uiState.hasAudio,
+        isProcessing = uiState.isProcessing || uiState.isBusy,
+        isExporting = uiState.isExporting,
         onStay = { exitConfirmDialogOpen = false },
         onSaveToDraftsAndExit = {
-            exitConfirmDialogOpen = false
-            viewModel.saveCloudDraft(uiState.activeProjectName.ifBlank { "مسودة Sonix" })
-            context.findHostActivity()?.finish()
+            viewModel.saveCloudDraft(uiState.activeProjectName.ifBlank { "مسودة Sonix" }) { saved ->
+                if (saved) {
+                    exitConfirmDialogOpen = false
+                    context.findHostActivity()?.finish()
+                }
+            }
         },
         onConfirmExit = {
             exitConfirmDialogOpen = false

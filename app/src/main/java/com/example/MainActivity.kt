@@ -1265,6 +1265,17 @@ private fun SonixRootApp(
                 }
             }
 
+            if (uiState.isExporting || uiState.exportComplete) {
+                ExportProgressDialog(
+                    language = lang,
+                    progress = uiState.exportProgress ?: 0f,
+                    fileName = uiState.exportFileName,
+                    saveLocation = uiState.exportSaveLocation,
+                    complete = uiState.exportComplete,
+                    onDismiss = { viewModel.dismissExportStatus() },
+                )
+            }
+
             val criticalPrompt by AppDiagnosticLog.criticalRestartPrompt.collectAsStateWithLifecycle()
             criticalPrompt?.let { promptEntry ->
                 AlertDialog(
@@ -1334,6 +1345,74 @@ private fun SonixRootApp(
             )
         }
     }
+}
+
+@Composable
+private fun ExportProgressDialog(
+    language: AppLanguage,
+    progress: Float,
+    fileName: String?,
+    saveLocation: String?,
+    complete: Boolean,
+    onDismiss: () -> Unit,
+) {
+    val isEnglish = language == AppLanguage.EN
+    val boundedProgress = progress.coerceIn(0f, 1f)
+    AlertDialog(
+        onDismissRequest = { if (complete) onDismiss() },
+        containerColor = StudioColors.CardSurface,
+        title = {
+            Text(
+                text = if (complete) {
+                    if (isEnglish) "Export complete" else "اكتمل حفظ الملف"
+                } else {
+                    if (isEnglish) "Saving audio file..." else "جارٍ حفظ وتصدير الملف الصوتي..."
+                },
+                color = if (complete) StudioColors.EmeraldBright else StudioColors.Cyan,
+                style = MaterialTheme.typography.titleMedium,
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                LinearProgressIndicator(
+                    progress = boundedProgress,
+                    color = if (complete) StudioColors.EmeraldBright else StudioColors.Cyan,
+                    trackColor = StudioColors.ElevatedSurface,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    text = "${(boundedProgress * 100f).toInt()}%",
+                    color = StudioColors.TextPrimary,
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                fileName?.takeIf { it.isNotBlank() }?.let {
+                    Text(
+                        text = if (isEnglish) "File: $it" else "الملف: $it",
+                        color = StudioColors.TextPrimary,
+                    )
+                }
+                saveLocation?.takeIf { it.isNotBlank() }?.let {
+                    Text(
+                        text = if (isEnglish) "Saved to: $it" else "مكان الحفظ: $it",
+                        color = StudioColors.TextSecondary,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            if (complete) {
+                Button(
+                    onClick = onDismiss,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = StudioColors.EmeraldBright,
+                        contentColor = StudioColors.BgTop,
+                    ),
+                ) {
+                    Text(if (isEnglish) "Done" else "تم")
+                }
+            }
+        },
+    )
 }
 
 private fun requiredFirstLoginPermissions(): List<String> = buildList {

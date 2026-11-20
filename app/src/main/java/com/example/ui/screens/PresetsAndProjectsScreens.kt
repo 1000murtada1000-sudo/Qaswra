@@ -452,6 +452,7 @@ fun ProjectsExportScreen(
 ) {
     val lang = uiState.language
     var exportDialogOpen by remember { mutableStateOf(false) }
+    var pendingDraftDeletion by remember { mutableStateOf<Pair<String, String>?>(null) }
 
     StudioScrollColumn {
         StudioFocusTopBar(
@@ -810,7 +811,7 @@ fun ProjectsExportScreen(
 
                                     val deleteDraftInteraction = remember { MutableInteractionSource() }
                                     IconButton(
-                                        onClick = { viewModel.deleteCloudDraft(draft.docId) },
+                                        onClick = { pendingDraftDeletion = draft.docId to draft.name },
                                         interactionSource = deleteDraftInteraction,
                                         colors = IconButtonDefaults.iconButtonColors(
                                             containerColor = StudioColors.ElevatedSurface,
@@ -929,6 +930,44 @@ fun ProjectsExportScreen(
                 }
             }
         }
+    }
+
+    pendingDraftDeletion?.let { (draftId, draftName) ->
+        AlertDialog(
+            onDismissRequest = { pendingDraftDeletion = null },
+            title = {
+                Text(if (lang == AppLanguage.EN) "Delete cloud draft?" else "حذف المسودة السحابية؟")
+            },
+            text = {
+                Text(
+                    if (lang == AppLanguage.EN) {
+                        "This will permanently delete \"$draftName\" from your cloud drafts."
+                    } else {
+                        "سيؤدي هذا إلى حذف \"$draftName\" نهائياً من مسوداتك السحابية."
+                    },
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        pendingDraftDeletion = null
+                        viewModel.deleteCloudDraft(draftId)
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = StudioColors.RoseBright),
+                ) {
+                    Text(if (lang == AppLanguage.EN) "Delete" else "حذف")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDraftDeletion = null }) {
+                    Text(if (lang == AppLanguage.EN) "Cancel" else "إلغاء")
+                }
+            },
+            shape = RoundedCornerShape(16.dp),
+            containerColor = StudioColors.CardSurface,
+            titleContentColor = StudioColors.TextPrimary,
+            textContentColor = StudioColors.TextSecondary,
+        )
     }
 
     ExportFormatDialog(

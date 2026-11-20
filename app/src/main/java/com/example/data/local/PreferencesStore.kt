@@ -12,6 +12,7 @@ import com.example.audio.ai.OnlineSoundItem
 import com.example.audio.aivoice.AiVoiceCharacter
 import com.example.model.AppLanguage
 import com.example.model.AuthSession
+import com.example.model.CloudDraft
 import com.example.model.SavedAssistantChatSession
 import com.example.model.StoredCustomPreset
 import kotlinx.coroutines.flow.Flow
@@ -28,6 +29,7 @@ private val Context.studioPrefsDataStore: DataStore<Preferences> by preferencesD
 class PreferencesStore(private val context: Context) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val presetListSerializer = ListSerializer(StoredCustomPreset.serializer())
+    private val cloudDraftListSerializer = ListSerializer(CloudDraft.serializer())
     private val chatSessionListSerializer = ListSerializer(SavedAssistantChatSession.serializer())
     private val soundItemListSerializer = ListSerializer(OnlineSoundItem.serializer())
     private val soundHistoryListSerializer = ListSerializer(OnlineSoundHistoryItem.serializer())
@@ -39,6 +41,7 @@ class PreferencesStore(private val context: Context) {
         private val KEY_AUTO_LOOP = booleanPreferencesKey("auto_loop")
         private val KEY_AUTH_SESSION = stringPreferencesKey("auth_session")
         private val KEY_CUSTOM_PRESETS_JSON = stringPreferencesKey("custom_presets_json")
+        private fun localDraftsKey(userId: String) = stringPreferencesKey("cloud_drafts_$userId")
         private val KEY_DEFAULT_SAVE_TREE_URI = stringPreferencesKey("default_save_tree_uri")
         private val KEY_DEFAULT_SAVE_FOLDER_NAME = stringPreferencesKey("default_save_folder_name")
         private val KEY_ASSISTANT_CHATS_JSON = stringPreferencesKey("assistant_chats_json")
@@ -67,6 +70,12 @@ class PreferencesStore(private val context: Context) {
         val raw = prefs[KEY_CUSTOM_PRESETS_JSON] ?: return@map emptyList()
         runCatching { json.decodeFromString(presetListSerializer, raw) }.getOrDefault(emptyList())
     }
+
+    fun localCloudDraftsFlow(userId: String): Flow<List<CloudDraft>> =
+        context.studioPrefsDataStore.data.map { prefs ->
+            val raw = prefs[localDraftsKey(userId)] ?: return@map emptyList()
+            runCatching { json.decodeFromString(cloudDraftListSerializer, raw) }.getOrDefault(emptyList())
+        }
 
     val defaultSaveFolderFlow: Flow<Pair<String?, String?>> = context.studioPrefsDataStore.data.map { prefs ->
         prefs[KEY_DEFAULT_SAVE_TREE_URI] to prefs[KEY_DEFAULT_SAVE_FOLDER_NAME]
@@ -153,6 +162,29 @@ class PreferencesStore(private val context: Context) {
     suspend fun saveCustomPresetsJson(presets: List<StoredCustomPreset>) {
         context.studioPrefsDataStore.edit { prefs ->
             prefs[KEY_CUSTOM_PRESETS_JSON] = json.encodeToString(presetListSerializer, presets)
+        }
+    }
+
+    suspend fun saveLocalCloudDraft(userId: String, draft: CloudDraft) {
+        context.studioPrefsDataStore.edit { prefs ->
+            val key = localDraftsKey(userId)
+            val current = prefs[key]?.let { raw ->
+                json.decodeFromString(cloudDraftListSerializer, raw)
+            }.orEmpty()
+            val updated = (listOf(draft) + current.filterNot { it.docId == draft.docId }).take(100)
+            prefs[key] = json.encodeToString(cloudDraftListSerializer, updated)
+        }
+    }
+
+    suspend fun removeLocalCloudDraft(userId: String, draftId: String) {
+        context.studioPrefsDataStore.edit { prefs ->
+            val key = localDraftsKey(userId)
+            val current = prefs[key]?.let { raw ->
+                json.decodeFromString(cloudDraftListSerializer, raw)
+            }.orEmpty()
+            val updated = current.filterNot { it.docId == draftId }
+            if (updated.isEmpty()) prefs.remove(key)
+            else prefs[key] = json.encodeToString(cloudDraftListSerializer, updated)
         }
     }
 

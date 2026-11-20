@@ -34,6 +34,7 @@ data class AppDiagnosticEntry(
     val stackTrace: String,
     val timestampMs: Long,
     val occurrenceCount: Int = 1,
+    val isRead: Boolean = false,
 )
 
 /**
@@ -74,6 +75,7 @@ object AppDiagnosticLog {
             storageFile = File(dir, FILE_NAME)
             val loaded = readFromDisk()
             _entries.value = loaded
+            _unreadCount.value = loaded.count { !it.isRead }
         }
     }
 
@@ -101,7 +103,7 @@ object AppDiagnosticLog {
             stackTrace = trace,
             timestampMs = System.currentTimeMillis(),
         )
-        appendEntry(entry, incrementUnread = true)
+        appendEntry(entry)
         return entry
     }
 
@@ -130,7 +132,7 @@ object AppDiagnosticLog {
             stackTrace = trace,
             timestampMs = System.currentTimeMillis(),
         )
-        appendEntry(entry, incrementUnread = true)
+        appendEntry(entry)
         if (requestUserRestartConsent) {
             _criticalRestartPrompt.value = entry
         }
@@ -153,7 +155,26 @@ object AppDiagnosticLog {
     }
 
     fun markAllRead() {
-        _unreadCount.value = 0
+        synchronized(lock) {
+            val read = _entries.value.map { it.copy(isRead = true) }
+            _entries.value = read
+            _unreadCount.value = 0
+            writeToDisk(read)
+        }
+    }
+
+    fun markRead(id: String) {
+        synchronized(lock) {
+            val current = _entries.value
+            val updated = current.map { entry ->
+                if (entry.id == id) entry.copy(isRead = true) else entry
+            }
+            if (updated != current) {
+                _entries.value = updated
+                _unreadCount.value = updated.count { !it.isRead }
+                writeToDisk(updated)
+            }
+        }
     }
 
     fun clearAll() {
@@ -289,7 +310,7 @@ object AppDiagnosticLog {
         return parts.joinToString("\n\n").ifBlank { "No stack trace captured." }.take(12_000)
     }
 
-    private fun appendEntry(entry: AppDiagnosticEntry, incrementUnread: Boolean) {
+    private fun appendEntry(entry: AppDiagnosticEntry) {
         synchronized(lock) {
             val normCode = entry.errorCode.trim()
             val normTool = entry.toolName.trim()
@@ -317,6 +338,7 @@ object AppDiagnosticLog {
                     stackTrace = entry.stackTrace.ifBlank { existing.stackTrace },
                     timestampMs = maxOf(existing.timestampMs, entry.timestampMs),
                     occurrenceCount = (existing.occurrenceCount.coerceAtLeast(1) + 1).coerceAtMost(9999),
+                    isRead = false,
                 )
                 val withoutOld = currentList.toMutableList().apply { removeAt(existingIdx) }
                 (listOf(merged) + withoutOld).take(MAX_ENTRIES)
@@ -325,9 +347,7 @@ object AppDiagnosticLog {
                     .take(MAX_ENTRIES)
             }
             _entries.value = updated
-            if (incrementUnread) {
-                _unreadCount.value = (_unreadCount.value + 1).coerceAtMost(999)
-            }
+            _unreadCount.value = updated.count { !it.isRead }.coerceAtMost(999)
             writeToDisk(updated)
         }
     }

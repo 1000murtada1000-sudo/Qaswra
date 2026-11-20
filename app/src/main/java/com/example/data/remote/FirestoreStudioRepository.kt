@@ -34,6 +34,7 @@ import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.IgnoreExtraProperties
 import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.Source
+import com.google.firebase.firestore.SetOptions
 import com.google.firebase.firestore.snapshots
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
@@ -556,6 +557,7 @@ class FirestoreStudioRepository(context: Context) {
     suspend fun saveDraft(
         userId: String,
         existingDraftId: String?,
+        draftId: String? = null,
         name: String,
         selectedPresetName: String,
         durationMs: Long,
@@ -572,38 +574,30 @@ class FirestoreStudioRepository(context: Context) {
         val safeRate = sampleRate.coerceIn(8000, 192000)
         val safeDuration = durationMs.coerceAtLeast(0L)
         val col = db.collection("users").document(userId).collection("drafts")
-        val targetRef = if (!existingDraftId.isNullOrBlank()) col.document(existingDraftId) else col.document()
+        val targetRef = when {
+            !existingDraftId.isNullOrBlank() -> col.document(existingDraftId)
+            !draftId.isNullOrBlank() -> col.document(draftId)
+            else -> col.document()
+        }
         val path = "users/$userId/drafts/${targetRef.id}"
         return try {
             val opType = if (existingDraftId.isNullOrBlank()) OperationType.CREATE else OperationType.UPDATE
-            val completed = if (!existingDraftId.isNullOrBlank()) {
-                val updates = hashMapOf<String, Any>(
-                    "name" to cleanName,
-                    "selectedPresetName" to cleanPreset,
-                    "durationMs" to safeDuration,
-                    "sampleRate" to safeRate,
-                    "dspConfig" to DspConfigFirestoreMapper.toMap(config),
-                    "updatedAt" to FieldValue.serverTimestamp(),
-                )
-                withTimeoutOrNull(30_000L) {
-                    targetRef.update(updates).await()
-                    true
+            val payload = hashMapOf<String, Any>(
+                "userId" to userId,
+                "name" to cleanName,
+                "selectedPresetName" to cleanPreset,
+                "durationMs" to safeDuration,
+                "sampleRate" to safeRate,
+                "dspConfig" to DspConfigFirestoreMapper.toMap(config),
+                "updatedAt" to FieldValue.serverTimestamp(),
+            ).apply {
+                if (existingDraftId.isNullOrBlank()) {
+                    put("createdAt", FieldValue.serverTimestamp())
                 }
-            } else {
-                val payload = hashMapOf<String, Any>(
-                    "userId" to userId,
-                    "name" to cleanName,
-                    "selectedPresetName" to cleanPreset,
-                    "durationMs" to safeDuration,
-                    "sampleRate" to safeRate,
-                    "dspConfig" to DspConfigFirestoreMapper.toMap(config),
-                    "createdAt" to FieldValue.serverTimestamp(),
-                    "updatedAt" to FieldValue.serverTimestamp(),
-                )
-                withTimeoutOrNull(30_000L) {
-                    targetRef.set(payload).await()
-                    true
-                }
+            }
+            val completed = withTimeoutOrNull(30_000L) {
+                targetRef.set(payload, SetOptions.merge()).await()
+                true
             }
             if (completed != true) {
                 val timeoutEx = SocketTimeoutException("Firestore draft write timed out after 30000ms at $path")

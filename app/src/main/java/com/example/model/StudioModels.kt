@@ -367,6 +367,7 @@ data class StudioPreset(
 )
 
 @Immutable
+@Serializable
 data class CloudDraft(
     val docId: String,
     val name: String,
