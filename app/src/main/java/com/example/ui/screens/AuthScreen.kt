@@ -109,9 +109,9 @@ import com.example.viewmodel.StudioViewModel
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.firebase.FirebaseApp
+import com.google.firebase.FirebaseNetworkException
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseAuthException
-import com.google.firebase.auth.FirebaseNetworkException
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
 import kotlinx.coroutines.CancellationException
@@ -232,7 +232,7 @@ fun AuthScreen(
     }
 
     fun formatGoogleAuthFailure(e: Exception): String {
-        val causeChain = generateSequence(e) { it.cause }
+        val causeChain = generateSequence<Throwable>(e) { it.cause }
         val isNetworkError = causeChain.any {
             it is FirebaseNetworkException ||
                 (it is FirebaseAuthException && it.errorCode == "ERROR_NETWORK_REQUEST_FAILED")
