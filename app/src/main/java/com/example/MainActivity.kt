@@ -22,6 +22,8 @@ import androidx.activity.result.contract.ActivityResultContract
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -68,6 +70,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -1271,6 +1274,7 @@ private fun SonixRootApp(
                     progress = uiState.exportProgress ?: 0f,
                     fileName = uiState.exportFileName,
                     saveLocation = uiState.exportSaveLocation,
+                    stageLabel = uiState.exportStageLabel,
                     complete = uiState.exportComplete,
                     onDismiss = { viewModel.dismissExportStatus() },
                     onCancel = { viewModel.cancelExport() },
@@ -1354,12 +1358,18 @@ private fun ExportProgressDialog(
     progress: Float,
     fileName: String?,
     saveLocation: String?,
+    stageLabel: String?,
     complete: Boolean,
     onDismiss: () -> Unit,
     onCancel: () -> Unit,
 ) {
     val isEnglish = language == AppLanguage.EN
     val boundedProgress = progress.coerceIn(0f, 1f)
+    val animatedProgress by animateFloatAsState(
+        targetValue = boundedProgress,
+        animationSpec = tween(durationMillis = 250),
+        label = "export_progress",
+    )
     AlertDialog(
         onDismissRequest = { if (complete) onDismiss() },
         containerColor = StudioColors.CardSurface,
@@ -1377,16 +1387,38 @@ private fun ExportProgressDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 LinearProgressIndicator(
-                    progress = boundedProgress,
+                    progress = animatedProgress,
                     color = if (complete) StudioColors.EmeraldBright else StudioColors.Cyan,
                     trackColor = StudioColors.ElevatedSurface,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                Text(
-                    text = "${(boundedProgress * 100f).toInt()}%",
-                    color = StudioColors.TextPrimary,
-                    style = MaterialTheme.typography.labelLarge,
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    if (!complete) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = StudioColors.Cyan,
+                            trackColor = StudioColors.ElevatedSurface,
+                        )
+                    }
+                    Text(
+                        text = "${(boundedProgress * 100f).toInt()}%",
+                        color = StudioColors.TextPrimary,
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                    if (!complete) {
+                        Text(
+                            text = stageLabel ?: if (isEnglish) "Processing audio..." else "جارٍ ترميز ومعالجة الصوت...",
+                            color = StudioColors.TextSecondary,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
                 fileName?.takeIf { it.isNotBlank() }?.let {
                     Text(
                         text = if (isEnglish) "File: $it" else "الملف: $it",

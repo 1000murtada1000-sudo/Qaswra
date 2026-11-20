@@ -4,6 +4,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.lang.reflect.Proxy
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -59,6 +60,8 @@ object FfmpegKitBridge {
         toolName: String,
         logNonZeroFailure: Boolean = true,
         cancelPrevious: Boolean = true,
+        totalDurationMs: Long = 0L,
+        onProgress: ((Float) -> Unit)? = null,
     ): Boolean = withContext(Dispatchers.IO) {
         if (!isAvailable()) return@withContext false
         val finalCommand = optimizeCommandWithThreads(command)
@@ -70,6 +73,40 @@ object FfmpegKitBridge {
             try {
                 val ffmpegClass = Class.forName("com.arthenica.ffmpegkit.FFmpegKit")
                 val returnCodeClass = Class.forName("com.arthenica.ffmpegkit.ReturnCode")
+                val configClass = Class.forName("com.arthenica.ffmpegkit.FFmpegKitConfig")
+                val statisticsClass = Class.forName("com.arthenica.ffmpegkit.Statistics")
+                val statisticsCallbackClass = Class.forName("com.arthenica.ffmpegkit.StatisticsCallback")
+                val enableCallbackMethod = runCatching {
+                    configClass.getMethod("enableStatisticsCallback", statisticsCallbackClass)
+                }.getOrNull()
+                val disableCallbackMethod = runCatching {
+                    configClass.getMethod("disableStatisticsCallback")
+                }.getOrNull()
+                val statisticsProxy = if (
+                    totalDurationMs > 0L &&
+                    onProgress != null &&
+                    enableCallbackMethod != null
+                ) {
+                    Proxy.newProxyInstance(
+                        statisticsCallbackClass.classLoader,
+                        arrayOf(statisticsCallbackClass),
+                    ) { _, method, args ->
+                        if (method.name == "apply" && !args.isNullOrEmpty()) {
+                            val statistics = args[0]
+                            val timeMs = runCatching {
+                                statisticsClass.getMethod("getTime").invoke(statistics) as? Long
+                                    ?: (statisticsClass.getMethod("getTime").invoke(statistics) as? Int)?.toLong()
+                            }.getOrNull() ?: 0L
+                            val ratio = (timeMs.toFloat() / totalDurationMs.toFloat()).coerceIn(0f, 1f)
+                            onProgress(ratio)
+                        }
+                        null
+                    }
+                } else null
+
+                if (statisticsProxy != null) {
+                    enableCallbackMethod?.invoke(null, statisticsProxy)
+                }
                 val executeMethod = ffmpegClass.getMethod("execute", String::class.java)
                 val session = executeMethod.invoke(null, finalCommand) ?: return@withContext false
 
@@ -108,6 +145,10 @@ object FfmpegKitBridge {
                 )
                 false
             } finally {
+                runCatching {
+                    val configClass = Class.forName("com.arthenica.ffmpegkit.FFmpegKitConfig")
+                    configClass.getMethod("disableStatisticsCallback").invoke(null)
+                }
                 activeExecutions.decrementAndGet()
             }
         }

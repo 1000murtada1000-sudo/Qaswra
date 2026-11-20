@@ -1720,6 +1720,8 @@ suspend fun exportSourceFileDirectlyWithFfmpeg(
     baseFileName: String,
     loudnessTarget: com.example.model.PlatformLoudnessTarget,
     dspConfig: DspConfig = DspConfig(),
+    totalDurationMs: Long = 0L,
+    onFfmpegProgress: ((Float) -> Unit)? = null,
 ): ExportedAudioResult? = withContext(Dispatchers.IO) {
     if (!sourceFile.exists() || !FfmpegKitBridge.isAvailable()) return@withContext null
     val safeIn = com.example.audio.cache.SmartCacheManager.ensureSafeFfmpegInputFile(context, sourceFile)
@@ -1745,7 +1747,13 @@ suspend fun exportSourceFileDirectlyWithFfmpeg(
             for (codec in oggCodecs) {
                 runCatching { oggOut.delete() }
                 val oggCmd = "-y -i \"${safeIn.absolutePath}\" -vn $afArg $codec \"${oggOut.absolutePath}\""
-                val ok = FfmpegKitBridge.execute(oggCmd, toolName = "LargeFileFfmpegExportOGG", logNonZeroFailure = false)
+                val ok = FfmpegKitBridge.execute(
+                    oggCmd,
+                    toolName = "LargeFileFfmpegExportOGG",
+                    logNonZeroFailure = false,
+                    totalDurationMs = totalDurationMs,
+                    onProgress = onFfmpegProgress,
+                )
                 if (ok && oggOut.exists() && oggOut.length() > 512L) {
                     return@withContext ExportedAudioResult(oggOut, "ogg", "audio/ogg")
                 }
@@ -1762,7 +1770,13 @@ suspend fun exportSourceFileDirectlyWithFfmpeg(
         }
         val outFile = File(exportDir, "${cleanBase}_$stamp.$ext")
         val cmd = "-y -i \"${safeIn.absolutePath}\" -vn $afArg $codecArgs \"${outFile.absolutePath}\""
-        val ok = FfmpegKitBridge.execute(cmd, toolName = "LargeFileFfmpegExport", logNonZeroFailure = true)
+        val ok = FfmpegKitBridge.execute(
+            cmd,
+            toolName = "LargeFileFfmpegExport",
+            logNonZeroFailure = true,
+            totalDurationMs = totalDurationMs,
+            onProgress = onFfmpegProgress,
+        )
         if (ok && outFile.exists() && outFile.length() > 512L) {
             ExportedAudioResult(outFile, ext, mime)
         } else {

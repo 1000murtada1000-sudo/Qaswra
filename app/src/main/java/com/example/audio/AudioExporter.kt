@@ -298,6 +298,7 @@ suspend fun exportRenderedAudioToFile(
     bitrateKbps: Int = 320,
     loudnessTarget: PlatformLoudnessTarget = PlatformLoudnessTarget.ORIGINAL,
     onProgress: ((Float) -> Unit)? = null,
+    onFfmpegProgress: ((Float) -> Unit)? = null,
 ): ExportedAudioResult = withContext(Dispatchers.IO) {
     val cleanBase = baseFileName.trim().replace(Regex("[\\\\/:*?\"<>|]"), "_").ifEmpty { "Sonix_Export" }
     val exportDir = File(context.cacheDir, "exports").apply { mkdirs() }
@@ -334,7 +335,16 @@ suspend fun exportRenderedAudioToFile(
             val ffmpegMp3Ok = try {
                 writeStereoWavFile(tempWav, prepared)
                 val cmd = "-y -i \"${tempWav.absolutePath}\" -vn -ar 44100 -ac 2 -c:a libmp3lame -b:a ${safeBitrate}k \"${mp3File.absolutePath}\""
-                val ok = FfmpegKitBridge.execute(cmd, toolName = "ExportMP3", logNonZeroFailure = false)
+                val totalDurationMs = if (prepared.sampleRate > 0) {
+                    prepared.frameCount.toLong() * 1000L / prepared.sampleRate.toLong()
+                } else 0L
+                val ok = FfmpegKitBridge.execute(
+                    cmd,
+                    toolName = "ExportMP3",
+                    logNonZeroFailure = false,
+                    totalDurationMs = totalDurationMs,
+                    onProgress = onFfmpegProgress,
+                )
                 ok && mp3File.exists() && mp3File.length() > 512L
             } catch (_: Throwable) {
                 false
@@ -375,12 +385,20 @@ suspend fun exportRenderedAudioToFile(
             val oggOk = try {
                 if (FfmpegKitBridge.isAvailable()) {
                     writeStereoWavFile(tempWav, prepared)
-                    onProgress?.invoke(0.35f)
                     val cmds = buildOggFfmpegCommands(tempWav.absolutePath, oggFile.absolutePath, bitrateKbps)
                     var encoded = false
                     for (cmd in cmds) {
                         runCatching { oggFile.delete() }
-                        val ok = FfmpegKitBridge.execute(cmd, toolName = "ExportOGG", logNonZeroFailure = false)
+                        val totalDurationMs = if (prepared.sampleRate > 0) {
+                            prepared.frameCount.toLong() * 1000L / prepared.sampleRate.toLong()
+                        } else 0L
+                        val ok = FfmpegKitBridge.execute(
+                            cmd,
+                            toolName = "ExportOGG",
+                            logNonZeroFailure = false,
+                            totalDurationMs = totalDurationMs,
+                            onProgress = onFfmpegProgress,
+                        )
                         if (ok && oggFile.exists() && oggFile.length() > 512L) {
                             encoded = true
                             break

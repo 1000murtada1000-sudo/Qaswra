@@ -325,6 +325,7 @@ data class StudioUiState(
     val exportComplete: Boolean = false,
     val exportFileName: String? = null,
     val exportSaveLocation: String? = null,
+    val exportStageLabel: String? = null,
     val purifyProgress: Float? = null,
     val ttsEngineMode: TtsEngineMode = TtsEngineMode.VOX_NEURAL_ONLINE,
     val studioLuxuryEnhancement: Boolean = true,
@@ -1018,6 +1019,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                 exportProgress = 0f,
                 exportFileName = fileName,
                 exportSaveLocation = null,
+                exportStageLabel = "جارٍ ترميز ومعالجة الصوت...",
             )
         }
     }
@@ -1039,6 +1041,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                 exportProgress = 1f,
                 exportFileName = fileName,
                 exportSaveLocation = destination,
+                exportStageLabel = "اكتمل الحفظ والتصدير",
             )
         }
         notifyAudioCompletionIfBackground(
@@ -1059,6 +1062,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                 exportProgress = null,
                 exportFileName = null,
                 exportSaveLocation = null,
+                exportStageLabel = null,
             )
         }
     }
@@ -3142,15 +3146,29 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                         musicBaseVolume = bgVol,
                     )
                 }
-                _uiState.update { it.copy(exportProgress = 0.45f) }
+                _uiState.update { it.copy(exportProgress = 0f, exportStageLabel = "جارٍ ترميز ومعالجة الصوت...") }
                 exportRenderedAudioToFile(
                     context = getApplication(),
                     buffer = mixed,
                     format = format,
                     baseFileName = fileName.ifBlank { "Sonix_Smart_Mix" },
-                ) { p ->
-                    _uiState.update { it.copy(exportProgress = 0.45f + p * 0.55f) }
-                }
+                    onProgress = { p ->
+                        _uiState.update {
+                            it.copy(
+                                exportProgress = (p * 0.90f).coerceIn(0f, 0.90f),
+                                exportStageLabel = "جارٍ ترميز ومعالجة الصوت...",
+                            )
+                        }
+                    },
+                    onFfmpegProgress = { p ->
+                        _uiState.update {
+                            it.copy(
+                                exportProgress = (p * 0.90f).coerceIn(0f, 0.90f),
+                                exportStageLabel = "جارٍ ترميز ومعالجة الصوت...",
+                            )
+                        }
+                    },
+                )
             } else {
                 val (f1, del1) = resolveAsDiskSourceFile(voice, voiceFile, "ex_v")
                 val (f2, del2) = resolveAsDiskSourceFile(music, musicFile, "ex_m")
@@ -3172,13 +3190,22 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                         postBanner("تعذر مزج الملفات قبل التصدير")
                         return@launchSingleFlightProcessing
                     }
-                    _uiState.update { it.copy(exportProgress = 0.55f) }
+                    _uiState.update { it.copy(exportProgress = 0f, exportStageLabel = "جارٍ ترميز ومعالجة الصوت...") }
                     exportSourceFileDirectlyWithFfmpeg(
                         context = getApplication(),
                         sourceFile = mixedFile,
                         format = format,
                         baseFileName = fileName.ifBlank { "Sonix_Smart_Mix" },
                         loudnessTarget = _uiState.value.selectedExportLoudness,
+                        totalDurationMs = _uiState.value.durationMs,
+                        onFfmpegProgress = { p ->
+                            _uiState.update {
+                                it.copy(
+                                    exportProgress = (p * 0.90f).coerceIn(0f, 0.90f),
+                                    exportStageLabel = "جارٍ ترميز ومعالجة الصوت...",
+                                )
+                            }
+                        },
                     ) ?: run {
                         postBanner("تعذر تصدير الدمج الذكي")
                         return@launchSingleFlightProcessing
@@ -4045,18 +4072,32 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                 val rendered = withContext(Dispatchers.Default) {
                     renderOfflineDsp(src, cfg)
                 }
-                _uiState.update { it.copy(exportProgress = 0.45f) }
+                _uiState.update { it.copy(exportProgress = 0f, exportStageLabel = "جارٍ ترميز ومعالجة الصوت...") }
                 exportRenderedAudioToFile(
                     context = getApplication(),
                     buffer = rendered,
                     format = format,
                     baseFileName = fileName,
                     loudnessTarget = loudnessTarget,
-                ) { p ->
-                    _uiState.update { it.copy(exportProgress = 0.45f + p * 0.55f) }
-                }
+                    onProgress = { p ->
+                        _uiState.update {
+                            it.copy(
+                                exportProgress = (p * 0.90f).coerceIn(0f, 0.90f),
+                                exportStageLabel = "جارٍ ترميز ومعالجة الصوت...",
+                            )
+                        }
+                    },
+                    onFfmpegProgress = { p ->
+                        _uiState.update {
+                            it.copy(
+                                exportProgress = (p * 0.90f).coerceIn(0f, 0.90f),
+                                exportStageLabel = "جارٍ ترميز ومعالجة الصوت...",
+                            )
+                        }
+                    },
+                )
             } else {
-                _uiState.update { it.copy(exportProgress = 0.35f) }
+                _uiState.update { it.copy(exportProgress = 0f, exportStageLabel = "جارٍ ترميز ومعالجة الصوت...") }
                 val directRes = exportSourceFileDirectlyWithFfmpeg(
                     context = getApplication(),
                     sourceFile = srcFile!!,
@@ -4064,12 +4105,21 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                     baseFileName = fileName,
                     loudnessTarget = loudnessTarget,
                     dspConfig = _uiState.value.dspConfig,
+                    totalDurationMs = _uiState.value.durationMs,
+                    onFfmpegProgress = { p ->
+                        _uiState.update {
+                            it.copy(
+                                exportProgress = (p * 0.90f).coerceIn(0f, 0.90f),
+                                exportStageLabel = "جارٍ ترميز ومعالجة الصوت...",
+                            )
+                        }
+                    },
                 ) ?: run {
                     postBanner("تعذر تصدير الملف الكبير عبر FFmpeg")
                     cancelExportTracking()
                     return@launchSingleFlightProcessing
                 }
-                _uiState.update { it.copy(exportProgress = 1.0f) }
+                _uiState.update { it.copy(exportProgress = 0.90f) }
                 directRes
             }
             pendingExportResult = res
@@ -4193,7 +4243,10 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun dispatchSaveToDevice(result: ExportedAudioResult, suggestedName: String) {
         if (!_uiState.value.isExporting) beginExportTracking(suggestedName)
-        updateExportProgress(0f)
+        updateExportProgress(0.90f)
+        _uiState.update {
+            if (it.isExporting) it.copy(exportStageLabel = "جارٍ حفظ الملف النهائي...") else it
+        }
         pendingExportResult = result
         pendingSuggestedFileName = suggestedName
         val treeUriStr = defaultSaveTreeUriString
@@ -4330,7 +4383,10 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             cancelExportTracking()
             return
         }
-        updateExportProgress(0f)
+        updateExportProgress(0.90f)
+        _uiState.update {
+            if (it.isExporting) it.copy(exportStageLabel = "جارٍ حفظ الملف النهائي...") else it
+        }
         exportJob?.cancel()
         exportJob = viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -4369,7 +4425,10 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         val totalBytes = result.file.length()
         val buffer = ByteArray(262_144)
         var bytesCopied = 0L
-        updateExportProgress(0f)
+        updateExportProgress(0.90f)
+        _uiState.update {
+            if (it.isExporting) it.copy(exportStageLabel = "جارٍ حفظ الملف النهائي...") else it
+        }
 
         output.buffered(buffer.size).use { bufferedOutput ->
             result.file.inputStream().buffered(buffer.size).use { input ->
@@ -4384,7 +4443,8 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                     } else {
                         0f
                     }
-                    updateExportProgress(fraction.coerceIn(0f, 1f))
+                    val copyRatio = fraction.coerceIn(0f, 1f)
+                    updateExportProgress(0.90f + copyRatio * 0.10f)
                 }
                 bufferedOutput.flush()
             }
@@ -5266,16 +5326,30 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             val res: ExportedAudioResult = if (primary != null && secondary != null) {
                 val combined = executeUnifiedMergeOverlay(getApplication(), primary, secondary, params)
                 val finalBuf = withContext(Dispatchers.Default) { renderOfflineDsp(combined, _uiState.value.dspConfig) }
-                _uiState.update { it.copy(exportProgress = 0.5f) }
+                _uiState.update { it.copy(exportProgress = 0f, exportStageLabel = "جارٍ ترميز ومعالجة الصوت...") }
                 exportRenderedAudioToFile(
                     context = getApplication(),
                     buffer = finalBuf,
                     format = format,
                     baseFileName = fileName.ifBlank { "Sonix_Merge_Studio" },
                     loudnessTarget = loudnessTarget,
-                ) { p ->
-                    _uiState.update { it.copy(exportProgress = 0.5f + p * 0.5f) }
-                }
+                    onProgress = { p ->
+                        _uiState.update {
+                            it.copy(
+                                exportProgress = (p * 0.90f).coerceIn(0f, 0.90f),
+                                exportStageLabel = "جارٍ ترميز ومعالجة الصوت...",
+                            )
+                        }
+                    },
+                    onFfmpegProgress = { p ->
+                        _uiState.update {
+                            it.copy(
+                                exportProgress = (p * 0.90f).coerceIn(0f, 0.90f),
+                                exportStageLabel = "جارٍ ترميز ومعالجة الصوت...",
+                            )
+                        }
+                    },
+                )
             } else {
                 val (f1, del1) = resolveAsDiskSourceFile(primary, primaryFile, "umex_1")
                 val (f2, del2) = resolveAsDiskSourceFile(secondary, secondaryFile, "umex_2")
@@ -5319,13 +5393,22 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                         postBanner("تعذر دمج الملفات قبل التصدير")
                         return@launchSingleFlightProcessing
                     }
-                    _uiState.update { it.copy(exportProgress = 0.55f) }
+                    _uiState.update { it.copy(exportProgress = 0f, exportStageLabel = "جارٍ ترميز ومعالجة الصوت...") }
                     exportSourceFileDirectlyWithFfmpeg(
                         context = getApplication(),
                         sourceFile = mergedFile,
                         format = format,
                         baseFileName = fileName.ifBlank { "Sonix_Merge_Studio" },
                         loudnessTarget = loudnessTarget,
+                        totalDurationMs = _uiState.value.durationMs,
+                        onFfmpegProgress = { p ->
+                            _uiState.update {
+                                it.copy(
+                                    exportProgress = (p * 0.90f).coerceIn(0f, 0.90f),
+                                    exportStageLabel = "جارٍ ترميز ومعالجة الصوت...",
+                                )
+                            }
+                        },
                     ) ?: run {
                         postBanner("تعذر تصدير الناتج النهائي")
                         return@launchSingleFlightProcessing
@@ -5723,16 +5806,30 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                 val rendered = withContext(Dispatchers.Default) {
                     renderOfflineDsp(src, _uiState.value.dspConfig)
                 }
-                _uiState.update { it.copy(exportProgress = 0.45f) }
+                _uiState.update { it.copy(exportProgress = 0f, exportStageLabel = "جارٍ ترميز ومعالجة الصوت...") }
                 exportRenderedAudioToFile(
                     context = getApplication(),
                     buffer = rendered,
                     format = ExportAudioFormat.M4A,
                     baseFileName = fileName.ifBlank { "Sonix_${bitrateKbps}kbps" },
                     bitrateKbps = bitrateKbps,
-                ) { p ->
-                    _uiState.update { it.copy(exportProgress = 0.45f + p * 0.55f) }
-                }
+                    onProgress = { p ->
+                        _uiState.update {
+                            it.copy(
+                                exportProgress = (p * 0.90f).coerceIn(0f, 0.90f),
+                                exportStageLabel = "جارٍ ترميز ومعالجة الصوت...",
+                            )
+                        }
+                    },
+                    onFfmpegProgress = { p ->
+                        _uiState.update {
+                            it.copy(
+                                exportProgress = (p * 0.90f).coerceIn(0f, 0.90f),
+                                exportStageLabel = "جارٍ ترميز ومعالجة الصوت...",
+                            )
+                        }
+                    },
+                )
             } else {
                 exportSourceFileDirectlyWithFfmpeg(
                     context = getApplication(),
@@ -5741,6 +5838,15 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                     baseFileName = fileName.ifBlank { "Sonix_${bitrateKbps}kbps" },
                     loudnessTarget = _uiState.value.selectedExportLoudness,
                     dspConfig = _uiState.value.dspConfig,
+                    totalDurationMs = _uiState.value.durationMs,
+                    onFfmpegProgress = { p ->
+                        _uiState.update {
+                            it.copy(
+                                exportProgress = (p * 0.90f).coerceIn(0f, 0.90f),
+                                exportStageLabel = "جارٍ ترميز ومعالجة الصوت...",
+                            )
+                        }
+                    },
                 ) ?: run {
                     postBanner("تعذر ضغط وتصدير الملف الصوتي")
                     return@launchSingleFlightProcessing
