@@ -156,7 +156,10 @@ internal fun CompactDropdownField(
                 searchQuery = ""
                 expanded = false
             },
-            containerColor = StudioColors.ElevatedSurface,
+            modifier = Modifier.heightIn(max = 220.dp),
+            shape = RoundedCornerShape(12.dp),
+            containerColor = StudioColors.CardSurface,
+            border = BorderStroke(1.dp, StudioColors.Border),
         ) {
             Column(
                 modifier = Modifier.widthIn(min = 210.dp, max = 320.dp),
@@ -196,7 +199,7 @@ internal fun CompactDropdownField(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 216.dp)
+                        .heightIn(max = 220.dp)
                         .verticalScroll(rememberScrollState()),
                 ) {
                     menuContent(searchQuery) {

@@ -22,7 +22,7 @@ object StudioColors {
     val RoseBright = Color(0xFFFB7185)
 
     val TextPrimary = Color(0xFFF1F5F9)
-    val TextSecondary = Color(0xFF94A3B8)
+    val TextSecondary = Color(0xFFA8B5C8)
     val TextMuted = Color(0xFF64748B)
     val WaveformInactive = Color(0xFF334155)
     val WaveformTrack = Color(0xFF1E293B)

@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -637,7 +638,7 @@ private fun CustomerSupportClassicCard(
                         checkedThumbColor = StudioColors.BgTop,
                         checkedTrackColor = StudioColors.Cyan,
                     ),
-                    modifier = Modifier.testTag("support_attach_logs_switch"),
+                    modifier = Modifier.minimumInteractiveComponentSize().testTag("support_attach_logs_switch"),
                 )
             }
 

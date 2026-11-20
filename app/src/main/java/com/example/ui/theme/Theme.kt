@@ -46,3 +46,12 @@ fun SonixTheme(content: @Composable () -> Unit) {
         content = content,
     )
 }
+
+@Composable
+fun StudioDropdownMenuTheme(content: @Composable () -> Unit) {
+    MaterialTheme(
+        colorScheme = MaterialTheme.colorScheme.copy(surfaceContainer = StudioColors.CardSurface),
+        shapes = MaterialTheme.shapes.copy(extraSmall = RoundedCornerShape(12.dp)),
+        content = content,
+    )
+}

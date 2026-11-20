@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -639,7 +640,7 @@ fun VoicePurifierScreen(
                                 checkedThumbColor = StudioColors.BgTop,
                                 checkedTrackColor = StudioColors.Emerald,
                             ),
-                            modifier = Modifier.testTag("purifier_enable_switch"),
+                            modifier = Modifier.minimumInteractiveComponentSize().testTag("purifier_enable_switch"),
                         )
                     },
                 )

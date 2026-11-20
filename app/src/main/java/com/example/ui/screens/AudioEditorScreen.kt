@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -935,7 +936,7 @@ fun AudioEditorScreen(
                             checkedThumbColor = StudioColors.BgTop,
                             checkedTrackColor = StudioColors.Cyan,
                         ),
-                        modifier = Modifier.testTag("editor_auto_fade_toggle"),
+                        modifier = Modifier.minimumInteractiveComponentSize().testTag("editor_auto_fade_toggle"),
                     )
                 }
 

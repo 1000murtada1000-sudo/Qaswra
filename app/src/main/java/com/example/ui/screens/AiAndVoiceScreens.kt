@@ -4,6 +4,8 @@ import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -124,6 +127,7 @@ import com.example.ui.components.ToolInfoDialog
 import com.example.ui.components.UndoRedoActionsRow
 import com.example.ui.components.rememberEditHistory
 import com.example.ui.theme.StudioColors
+import com.example.ui.theme.StudioDropdownMenuTheme
 import com.example.ui.theme.TelemetryTextStyle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.model.PlaybackTelemetry
@@ -1133,7 +1137,7 @@ fun TextToSpeechStudioScreen(
                                 checkedThumbColor = StudioColors.BgTop,
                                 checkedTrackColor = StudioColors.Cyan,
                             ),
-                            modifier = Modifier.testTag("tts_studio_luxury_switch"),
+                            modifier = Modifier.minimumInteractiveComponentSize().testTag("tts_studio_luxury_switch"),
                         )
                     }
                 }
@@ -1555,7 +1559,7 @@ fun TextToSpeechStudioScreen(
                         Switch(
                             checked = appendToExisting,
                             onCheckedChange = { appendToExisting = it },
-                            modifier = Modifier.testTag("tts_append_switch"),
+                            modifier = Modifier.minimumInteractiveComponentSize().testTag("tts_append_switch"),
                         )
                     }
                 }
@@ -1935,10 +1939,12 @@ fun VoiceChangerScreen(
                     selected = selectedLiveEffect,
                     options = liveOptions.map { it.first },
                     optionLabel = { effect ->
-                        if (effect == VoiceEffect.CHILD_NATURAL) {
-                            t(lang, "voice_char_child")
-                        } else {
-                            liveOptions.first { it.first == effect }.second
+                        when (effect) {
+                            VoiceEffect.CHILD_NATURAL -> t(lang, "voice_char_child")
+                            VoiceEffect.DEEP -> if (lang == AppLanguage.EN) "Deep" else "عميق"
+                            VoiceEffect.ECHO -> if (lang == AppLanguage.EN) "Echo" else "صدى"
+                            VoiceEffect.NONE -> if (lang == AppLanguage.EN) "Natural" else "طبيعي"
+                            else -> liveOptions.first { it.first == effect }.second
                         }
                     },
                     testTag = "live_fx_dropdown",
@@ -2349,18 +2355,25 @@ private fun <T> VoiceModeDropdown(
                 .menuAnchor(MenuAnchorType.PrimaryNotEditable)
                 .testTag(testTag),
         )
-        ExposedDropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
-        ) {
-            options.forEach { option ->
-                DropdownMenuItem(
-                    text = { Text(optionLabel(option)) },
-                    onClick = {
-                        expanded = false
-                        onSelect(option)
-                    },
-                )
+        StudioDropdownMenuTheme {
+            ExposedDropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false },
+                modifier = Modifier
+                    .heightIn(max = 220.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(StudioColors.CardSurface)
+                    .border(1.dp, StudioColors.Border, RoundedCornerShape(12.dp)),
+            ) {
+                options.forEach { option ->
+                    DropdownMenuItem(
+                        text = { Text(optionLabel(option)) },
+                        onClick = {
+                            expanded = false
+                            onSelect(option)
+                        },
+                    )
+                }
             }
         }
     }
@@ -2395,30 +2408,37 @@ private fun VoiceProfileDropdown(
                 .menuAnchor(MenuAnchorType.PrimaryNotEditable)
                 .testTag("voice_profile_dropdown"),
         )
-        ExposedDropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
-        ) {
-            personas.forEach { persona ->
-                DropdownMenuItem(
-                    text = {
-                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text(if (language == AppLanguage.EN) persona.titleEn else persona.titleAr)
-                            Text(
-                                text = if (language == AppLanguage.EN) persona.descEn else persona.descAr,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = StudioColors.TextSecondary,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    },
-                    onClick = {
-                        expanded = false
-                        onSelectPersona(persona)
-                    },
-                    modifier = Modifier.testTag("voice_profile_${persona.id}"),
-                )
+        StudioDropdownMenuTheme {
+            ExposedDropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false },
+                modifier = Modifier
+                    .heightIn(max = 220.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(StudioColors.CardSurface)
+                    .border(1.dp, StudioColors.Border, RoundedCornerShape(12.dp)),
+            ) {
+                personas.forEach { persona ->
+                    DropdownMenuItem(
+                        text = {
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(if (language == AppLanguage.EN) persona.titleEn else persona.titleAr)
+                                Text(
+                                    text = if (language == AppLanguage.EN) persona.descEn else persona.descAr,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = StudioColors.TextSecondary,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        },
+                        onClick = {
+                            expanded = false
+                            onSelectPersona(persona)
+                        },
+                        modifier = Modifier.testTag("voice_profile_${persona.id}"),
+                    )
+                }
             }
         }
     }
@@ -2454,28 +2474,35 @@ private fun AcousticModeDropdown(
                 .menuAnchor(MenuAnchorType.PrimaryNotEditable)
                 .testTag("voice_acoustic_mode_dropdown"),
         )
-        ExposedDropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
-        ) {
-            TtsPersonaAcousticMode.entries.forEach { mode ->
-                DropdownMenuItem(
-                    text = {
-                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text(if (language == AppLanguage.EN) mode.titleEn else mode.titleAr)
-                            Text(
-                                text = if (language == AppLanguage.EN) mode.descEn else mode.descAr,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = StudioColors.TextSecondary,
-                            )
-                        }
-                    },
-                    onClick = {
-                        expanded = false
-                        onSelectAcousticMode(mode)
-                    },
-                    modifier = Modifier.testTag("voice_acoustic_mode_${mode.name}"),
-                )
+        StudioDropdownMenuTheme {
+            ExposedDropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false },
+                modifier = Modifier
+                    .heightIn(max = 220.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(StudioColors.CardSurface)
+                    .border(1.dp, StudioColors.Border, RoundedCornerShape(12.dp)),
+            ) {
+                TtsPersonaAcousticMode.entries.forEach { mode ->
+                    DropdownMenuItem(
+                        text = {
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(if (language == AppLanguage.EN) mode.titleEn else mode.titleAr)
+                                Text(
+                                    text = if (language == AppLanguage.EN) mode.descEn else mode.descAr,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = StudioColors.TextSecondary,
+                                )
+                            }
+                        },
+                        onClick = {
+                            expanded = false
+                            onSelectAcousticMode(mode)
+                        },
+                        modifier = Modifier.testTag("voice_acoustic_mode_${mode.name}"),
+                    )
+                }
             }
         }
     }
@@ -2871,7 +2898,7 @@ fun SettingsScreen(
                             checkedThumbColor = StudioColors.BgTop,
                             checkedTrackColor = StudioColors.Emerald,
                         ),
-                        modifier = Modifier.testTag("settings_loop_switch"),
+                        modifier = Modifier.minimumInteractiveComponentSize().testTag("settings_loop_switch"),
                     )
                 }
             }

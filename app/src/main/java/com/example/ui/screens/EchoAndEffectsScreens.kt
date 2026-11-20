@@ -25,6 +25,8 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -115,6 +117,7 @@ import com.example.ui.components.StudioScrollColumn
 import com.example.ui.components.StudioSectionCard
 import com.example.ui.components.UndoRedoActionsRow
 import com.example.ui.theme.StudioColors
+import com.example.ui.theme.StudioDropdownMenuTheme
 import com.example.ui.theme.TelemetryTextStyle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.model.PlaybackTelemetry
@@ -222,7 +225,7 @@ fun EchoReverbScreen(
                                 checkedThumbColor = StudioColors.BgTop,
                                 checkedTrackColor = StudioColors.Cyan,
                             ),
-                            modifier = Modifier.testTag("echo_enable_switch"),
+                            modifier = Modifier.minimumInteractiveComponentSize().testTag("echo_enable_switch"),
                         )
                     },
                 )
@@ -307,24 +310,31 @@ fun EchoReverbScreen(
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = echoPresetExpanded) },
                 modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
             )
-            ExposedDropdownMenu(
-                expanded = echoPresetExpanded,
-                onDismissRequest = { echoPresetExpanded = false },
-            ) {
-                ECHO_SPACE_PRESETS.forEach { space ->
-                    DropdownMenuItem(
-                        text = {
-                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                Text(t(lang, space.titleKey))
-                                Text(t(lang, space.descKey), style = MaterialTheme.typography.bodySmall, color = StudioColors.TextSecondary)
-                            }
-                        },
-                        onClick = {
-                            echoPresetExpanded = false
-                            viewModel.applyEchoSpacePreset(space)
-                        },
-                        modifier = Modifier.testTag("echo_space_${space.id}"),
-                    )
+            StudioDropdownMenuTheme {
+                ExposedDropdownMenu(
+                    expanded = echoPresetExpanded,
+                    onDismissRequest = { echoPresetExpanded = false },
+                    modifier = Modifier
+                        .heightIn(max = 220.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(StudioColors.CardSurface)
+                        .border(1.dp, StudioColors.Border, RoundedCornerShape(12.dp)),
+                ) {
+                    ECHO_SPACE_PRESETS.forEach { space ->
+                        DropdownMenuItem(
+                            text = {
+                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text(t(lang, space.titleKey))
+                                    Text(t(lang, space.descKey), style = MaterialTheme.typography.bodySmall, color = StudioColors.TextSecondary)
+                                }
+                            },
+                            onClick = {
+                                echoPresetExpanded = false
+                                viewModel.applyEchoSpacePreset(space)
+                            },
+                            modifier = Modifier.testTag("echo_space_${space.id}"),
+                        )
+                    }
                 }
             }
         }
@@ -1170,7 +1180,7 @@ fun EffectsChainScreen(
                             checkedThumbColor = StudioColors.BgTop,
                             checkedTrackColor = StudioColors.Cyan,
                         ),
-                        modifier = Modifier.testTag("chain_toggle_${slot.type.name.lowercase()}"),
+                        modifier = Modifier.minimumInteractiveComponentSize().testTag("chain_toggle_${slot.type.name.lowercase()}"),
                     )
                 }
             }
@@ -1248,7 +1258,7 @@ fun EffectDetailScreen(
                                 checkedThumbColor = StudioColors.BgTop,
                                 checkedTrackColor = StudioColors.Cyan,
                             ),
-                            modifier = Modifier.testTag("effect_detail_enable_switch"),
+                            modifier = Modifier.minimumInteractiveComponentSize().testTag("effect_detail_enable_switch"),
                         )
                     },
                 )

@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -120,6 +121,7 @@ fun InfoBadgeButton(
         color = accentColor.copy(alpha = 0.16f),
         border = BorderStroke(1.dp, accentColor.copy(alpha = 0.5f)),
         modifier = modifier
+            .minimumInteractiveComponentSize()
             .size(48.dp)
             .padding(8.dp)
             .lit(interaction, MaterialTheme.colorScheme.primary, cornerRadius = 24.dp)

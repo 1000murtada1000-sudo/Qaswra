@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -462,7 +463,7 @@ fun BatchQueueScreen(
                         checked = settings.normalizeOutput,
                         enabled = !batch.isRunning,
                         onCheckedChange = { viewModel.updateBatchDspSettings(normalizeOutput = it) },
-                        modifier = Modifier.testTag("batch_normalize_switch"),
+                        modifier = Modifier.minimumInteractiveComponentSize().testTag("batch_normalize_switch"),
                     )
                 }
             }

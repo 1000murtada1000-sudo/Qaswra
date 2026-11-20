@@ -1,6 +1,7 @@
 package com.example.ui.components
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
@@ -116,6 +117,7 @@ fun UndoRedoActionsRow(
                 disabledContentColor = StudioColors.TextMuted.copy(alpha = 0.35f),
             ),
             modifier = Modifier
+                .minimumInteractiveComponentSize()
                 .size(34.dp)
                 .lit(undoInteraction, MaterialTheme.colorScheme.primary, cornerRadius = 17.dp)
                 .testTag(undoTag),
@@ -137,6 +139,7 @@ fun UndoRedoActionsRow(
                 disabledContentColor = StudioColors.TextMuted.copy(alpha = 0.35f),
             ),
             modifier = Modifier
+                .minimumInteractiveComponentSize()
                 .size(34.dp)
                 .lit(redoInteraction, MaterialTheme.colorScheme.primary, cornerRadius = 17.dp)
                 .testTag(redoTag),

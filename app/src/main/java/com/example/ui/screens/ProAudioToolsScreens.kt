@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -300,7 +301,11 @@ fun AudioSplitScreen(
                         color = StudioColors.TextSecondary,
                         modifier = Modifier.weight(1f),
                     )
-                    Switch(checked = saveBothToLibrary, onCheckedChange = { saveBothToLibrary = it })
+                    Switch(
+                        checked = saveBothToLibrary,
+                        onCheckedChange = { saveBothToLibrary = it },
+                        modifier = Modifier.minimumInteractiveComponentSize(),
+                    )
                 }
 
                 val splitExecInteraction = remember { MutableInteractionSource() }
@@ -668,7 +673,7 @@ fun PitchAndSpeedScreen(
                             userEditedSliders = true
                             localPreserveFormants = checked
                         },
-                        modifier = Modifier.testTag("pitch_preserve_formants_switch"),
+                        modifier = Modifier.minimumInteractiveComponentSize().testTag("pitch_preserve_formants_switch"),
                     )
                 }
 
@@ -1907,6 +1912,7 @@ fun RingtoneMakerScreen(
                             setAsDefault = it
                             commitRingtone(def = it)
                         },
+                        modifier = Modifier.minimumInteractiveComponentSize(),
                     )
                 }
 
