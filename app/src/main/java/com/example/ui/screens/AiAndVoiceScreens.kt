@@ -14,12 +14,15 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.AdminPanelSettings
@@ -28,6 +31,7 @@ import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Clear
 import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Language
@@ -72,6 +76,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -124,6 +129,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.model.PlaybackTelemetry
 import com.example.viewmodel.StudioUiState
 import com.example.viewmodel.StudioViewModel
+import com.example.viewmodel.AccountDeletionResult
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.StateFlow
 import kotlin.math.roundToInt
 
@@ -2812,6 +2819,10 @@ fun SettingsScreen(
     val lang = uiState.language
     var langDialogOpen by remember { mutableStateOf(false) }
     var privacyDialogOpen by rememberSaveable { mutableStateOf(false) }
+    var deleteAccountDialogOpen by rememberSaveable { mutableStateOf(false) }
+    var deletionInProgress by remember { mutableStateOf(false) }
+    var deletionMessageKey by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
     val devPanelState by viewModel.developerPanelUiState.collectAsStateWithLifecycle()
     val showDeveloperEntry = BuildConfig.DEVELOPER_PANEL_ENABLED && devPanelState.ownerVerification.isAuthorized
 
@@ -2965,6 +2976,45 @@ fun SettingsScreen(
             }
         }
 
+        if (uiState.authSession is AuthSession.SignedIn) {
+            Card(
+                onClick = {
+                    deletionMessageKey = null
+                    deleteAccountDialogOpen = true
+                },
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = StudioColors.CardSurface),
+                border = BorderStroke(1.dp, StudioColors.RoseBright.copy(alpha = 0.55f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("settings_delete_account_card"),
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .defaultMinSize(minHeight = 64.dp)
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Icon(Icons.Rounded.DeleteOutline, contentDescription = null, tint = StudioColors.RoseBright)
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            text = t(lang, "account_delete_button"),
+                            style = MaterialTheme.typography.titleSmall,
+                            color = StudioColors.RoseBright,
+                        )
+                        Text(
+                            text = t(lang, "account_delete_scope_note"),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = StudioColors.TextSecondary,
+                        )
+                    }
+                    Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, contentDescription = null, tint = StudioColors.TextMuted)
+                }
+            }
+        }
+
         if (showDeveloperEntry) {
             val devInteraction = remember { MutableInteractionSource() }
             Card(
@@ -3042,6 +3092,9 @@ fun SettingsScreen(
                     text = t(lang, "settings_privacy_dialog_body"),
                     style = MaterialTheme.typography.bodyMedium,
                     color = StudioColors.TextSecondary,
+                    modifier = Modifier
+                        .heightIn(max = 420.dp)
+                        .verticalScroll(rememberScrollState()),
                 )
             },
             confirmButton = {
@@ -3065,6 +3118,85 @@ fun SettingsScreen(
                     Text(t(lang, "settings_privacy_close"), color = StudioColors.Cyan)
                 }
             },
+        )
+    }
+
+    if (deleteAccountDialogOpen) {
+        AlertDialog(
+            onDismissRequest = {
+                if (!deletionInProgress) {
+                    deleteAccountDialogOpen = false
+                    deletionMessageKey = null
+                }
+            },
+            containerColor = StudioColors.CardSurface,
+            title = {
+                Text(
+                    text = t(lang, "account_delete_confirm_title"),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = StudioColors.RoseBright,
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = t(lang, "account_delete_confirm_body"),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = StudioColors.TextSecondary,
+                    )
+                    deletionMessageKey?.let { messageKey ->
+                        Text(
+                            text = t(lang, messageKey),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = StudioColors.Amber,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !deletionInProgress,
+                    onClick = {
+                        scope.launch {
+                            deletionInProgress = true
+                            deletionMessageKey = null
+                            when (viewModel.deleteCurrentAccountAndData()) {
+                                AccountDeletionResult.Success -> {
+                                    deleteAccountDialogOpen = false
+                                    viewModel.showStatusBanner(t(lang, "account_delete_success"))
+                                }
+                                AccountDeletionResult.RecentLoginRequired -> {
+                                    deletionMessageKey = "account_delete_recent_login"
+                                }
+                                AccountDeletionResult.NetworkError -> {
+                                    deletionMessageKey = "account_delete_network_error"
+                                }
+                                AccountDeletionResult.Failed -> {
+                                    deletionMessageKey = "account_delete_failed"
+                                }
+                            }
+                            deletionInProgress = false
+                        }
+                    },
+                ) {
+                    Text(
+                        text = t(lang, if (deletionInProgress) "account_delete_progress" else "account_delete_confirm"),
+                        color = StudioColors.RoseBright,
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = !deletionInProgress,
+                    onClick = {
+                        deleteAccountDialogOpen = false
+                        deletionMessageKey = null
+                    },
+                ) {
+                    Text(t(lang, "settings_privacy_close"), color = StudioColors.Cyan)
+                }
+            },
+            modifier = Modifier.testTag("settings_delete_account_dialog"),
         )
     }
 }

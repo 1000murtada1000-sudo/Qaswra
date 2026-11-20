@@ -46,4 +46,7 @@ interface StudioDao {
 
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertAccount(account: LocalAccountEntity)
+
+    @Query("DELETE FROM local_accounts WHERE uid = :uid")
+    suspend fun deleteAccountByUid(uid: String): Int
 }

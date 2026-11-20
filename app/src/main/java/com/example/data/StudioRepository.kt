@@ -260,6 +260,9 @@ class StudioRepository(private val context: Context) {
         }
     }
 
+    suspend fun deleteLocalAccount(uid: String): Boolean =
+        dao.deleteAccountByUid(uid) > 0
+
     suspend fun saveProject(
         existingId: Long,
         name: String,

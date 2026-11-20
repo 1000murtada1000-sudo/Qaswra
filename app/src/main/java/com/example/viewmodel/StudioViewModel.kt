@@ -203,7 +203,11 @@ import com.example.network.AppUpdateOutcome
 import com.google.firebase.Firebase
 import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseAuthException
+import com.google.firebase.auth.FirebaseAuthRecentLoginRequiredException
+import com.google.firebase.auth.FirebaseNetworkException
 import com.google.firebase.auth.auth
+import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.Dispatchers
@@ -225,12 +229,21 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.tasks.await
 import java.io.File
+import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
 import kotlin.math.abs
+
+sealed interface AccountDeletionResult {
+    data object Success : AccountDeletionResult
+    data object RecentLoginRequired : AccountDeletionResult
+    data object NetworkError : AccountDeletionResult
+    data object Failed : AccountDeletionResult
+}
 
 sealed interface StudioSideEffect {
     data class PromptSaveDocument(val result: ExportedAudioResult, val suggestedName: String) : StudioSideEffect
@@ -964,33 +977,113 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun signOut() {
-        viewModelScope.launch {
-            withContext(NonCancellable) {
-                // Stop active Firestore snapshot collectors BEFORE Firebase.auth.signOut()
-                // to avoid spurious PERMISSION_DENIED race conditions.
-                developerPanelController.stopCollectors()
-                attachCloudListeners(null)
-                _uiState.update {
-                    it.copy(
-                        authSession = AuthSession.SignedOut,
-                        activeCloudDraftId = null,
-                    )
-                }
-                runCatching {
-                    CredentialManager.create(getApplication()).clearCredentialState(ClearCredentialStateRequest())
-                }.onFailure { err ->
-                    Log.w("Auth", "Failed to clear credential state: ${err.message}")
-                }
-                runCatching {
-                    Firebase.auth.signOut()
-                }.onFailure { err ->
-                    Log.w("Auth", "Firebase signOut warning: ${err.message}")
-                }
+    suspend fun deleteCurrentAccountAndData(): AccountDeletionResult {
+        val session = _uiState.value.authSession as? AuthSession.SignedIn
+            ?: return AccountDeletionResult.Failed
+        val firebaseUser = runCatching { Firebase.auth.currentUser }.getOrNull()
+
+        if (firebaseUser != null) {
+            if (firebaseUser.uid != session.uid) return AccountDeletionResult.Failed
+            developerPanelController.stopCollectors()
+            attachCloudListeners(null)
+            val cloudDeletion = firestoreRepo.deleteUserProjectData(session.uid)
+            if (cloudDeletion.isFailure) {
+                attachCloudListeners(session.uid)
                 if (BuildConfig.DEVELOPER_PANEL_ENABLED) {
                     developerPanelController.onAuthSessionChanged()
                 }
+                return accountDeletionFailure(cloudDeletion.exceptionOrNull() ?: IllegalStateException())
+            }
+            try {
+                firebaseUser.delete().await()
+            } catch (e: CancellationException) {
+                attachCloudListeners(session.uid)
+                if (BuildConfig.DEVELOPER_PANEL_ENABLED) {
+                    developerPanelController.onAuthSessionChanged()
+                }
+                throw e
+            } catch (e: Exception) {
+                Log.e("AccountDeletion", "Firebase account deletion failed after cloud project cleanup.", e)
+                attachCloudListeners(session.uid)
+                if (BuildConfig.DEVELOPER_PANEL_ENABLED) {
+                    developerPanelController.onAuthSessionChanged()
+                }
+                return accountDeletionFailure(e)
+            }
+        } else if (session.uid.startsWith("local_")) {
+            try {
+                if (!repository.deleteLocalAccount(session.uid)) {
+                    return AccountDeletionResult.Failed
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("AccountDeletion", "Local account deletion failed.", e)
+                return accountDeletionFailure(e)
+            }
+        } else {
+            return AccountDeletionResult.Failed
+        }
+
+        completeSignOut()
+        return AccountDeletionResult.Success
+    }
+
+    private fun accountDeletionFailure(error: Throwable): AccountDeletionResult {
+        val causes = generateSequence(error) { it.cause }
+        return when {
+            causes.any {
+                it is FirebaseAuthRecentLoginRequiredException ||
+                    (it is FirebaseAuthException && it.errorCode == "ERROR_REQUIRES_RECENT_LOGIN")
+            } -> AccountDeletionResult.RecentLoginRequired
+            causes.any {
+                it is FirebaseNetworkException ||
+                    it is IOException ||
+                    (it is FirebaseFirestoreException &&
+                        it.code in setOf(
+                            FirebaseFirestoreException.Code.UNAVAILABLE,
+                            FirebaseFirestoreException.Code.DEADLINE_EXCEEDED,
+                        ))
+            } -> AccountDeletionResult.NetworkError
+            else -> AccountDeletionResult.Failed
+        }
+    }
+
+    fun signOut() {
+        viewModelScope.launch {
+            completeSignOut()
+        }
+    }
+
+    private suspend fun completeSignOut() {
+        withContext(NonCancellable) {
+            // Stop active Firestore snapshot collectors BEFORE Firebase.auth.signOut()
+            // to avoid spurious PERMISSION_DENIED race conditions.
+            developerPanelController.stopCollectors()
+            attachCloudListeners(null)
+            _uiState.update {
+                it.copy(
+                    authSession = AuthSession.SignedOut,
+                    activeCloudDraftId = null,
+                )
+            }
+            runCatching {
+                CredentialManager.create(getApplication()).clearCredentialState(ClearCredentialStateRequest())
+            }.onFailure { err ->
+                Log.w("Auth", "Failed to clear credential state: ${err.message}")
+            }
+            runCatching {
+                Firebase.auth.signOut()
+            }.onFailure { err ->
+                Log.w("Auth", "Firebase signOut warning: ${err.message}")
+            }
+            if (BuildConfig.DEVELOPER_PANEL_ENABLED) {
+                developerPanelController.onAuthSessionChanged()
+            }
+            runCatching {
                 repository.saveAuthSession(AuthSession.SignedOut)
+            }.onFailure { err ->
+                Log.e("Auth", "Failed to persist signed-out state.", err)
             }
         }
     }

@@ -33,6 +33,7 @@ import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.IgnoreExtraProperties
 import com.google.firebase.firestore.Query
+import com.google.firebase.firestore.Source
 import com.google.firebase.firestore.snapshots
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
@@ -637,6 +638,42 @@ class FirestoreStudioRepository(context: Context) {
             }
             if (completed != true) {
                 val timeoutEx = SocketTimeoutException("Firestore draft delete timed out after 30000ms at $path")
+                handleFirestoreError(timeoutEx, OperationType.DELETE, path)
+                return Result.failure(timeoutEx)
+            }
+            Result.success(Unit)
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            handleFirestoreError(e, OperationType.DELETE, path)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun deleteUserProjectData(userId: String): Result<Unit> {
+        val db = dbOrNull()
+            ?: return Result.failure(IllegalStateException("Firebase is not initialized"))
+        if (!userId.matches(Regex("^[a-zA-Z0-9_\\-]{1,128}$"))) {
+            return Result.failure(IllegalArgumentException("Invalid user identifier"))
+        }
+
+        val userRef = db.collection("users").document(userId)
+        val path = "users/$userId"
+        return try {
+            val completed = withTimeoutOrNull(120_000L) {
+                for (subcollection in listOf("custom_presets", "drafts")) {
+                    val collection = userRef.collection(subcollection)
+                    while (true) {
+                        val page = collection.limit(450).get(Source.SERVER).await()
+                        if (page.isEmpty) break
+                        val batch = db.batch()
+                        page.documents.forEach { document -> batch.delete(document.reference) }
+                        batch.commit().await()
+                    }
+                }
+                true
+            }
+            if (completed != true) {
+                val timeoutEx = SocketTimeoutException("User project data deletion timed out after 120000ms at $path")
                 handleFirestoreError(timeoutEx, OperationType.DELETE, path)
                 return Result.failure(timeoutEx)
             }
