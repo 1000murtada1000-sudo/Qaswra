@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -54,6 +55,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.i18n.t
 import com.example.model.AppLanguage
@@ -68,6 +70,7 @@ fun LanguageBadgeButton(
     currentLanguage: AppLanguage,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    compact: Boolean = false,
 ) {
     val interaction = remember { MutableInteractionSource() }
     Surface(
@@ -77,24 +80,35 @@ fun LanguageBadgeButton(
         color = StudioColors.ElevatedSurface.copy(alpha = 0.9f),
         border = BorderStroke(1.dp, StudioColors.Cyan.copy(alpha = 0.45f)),
         modifier = modifier
-            .defaultMinSize(minHeight = 48.dp)
-            .lit(interaction, MaterialTheme.colorScheme.primary, cornerRadius = 24.dp)
+            .then(if (compact) Modifier.height(34.dp) else Modifier.defaultMinSize(minHeight = 48.dp))
+            .lit(
+                interaction,
+                MaterialTheme.colorScheme.primary,
+                cornerRadius = if (compact) 17.dp else 24.dp,
+            )
             .testTag("language_badge_button"),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            modifier = Modifier.padding(
+                horizontal = if (compact) 8.dp else 12.dp,
+                vertical = if (compact) 4.dp else 8.dp,
+            ),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 6.dp),
         ) {
             Icon(
                 imageVector = Icons.Rounded.Language,
                 contentDescription = t(currentLanguage, "app_language_title"),
                 tint = StudioColors.Cyan,
-                modifier = Modifier.size(18.dp),
+                modifier = Modifier.size(if (compact) 14.dp else 18.dp),
             )
             Text(
                 text = currentLanguage.shortBadge,
-                style = MaterialTheme.typography.labelLarge,
+                style = if (compact) {
+                    MaterialTheme.typography.labelMedium.copy(fontSize = 12.sp)
+                } else {
+                    MaterialTheme.typography.labelLarge
+                },
                 color = StudioColors.TextPrimary,
             )
         }

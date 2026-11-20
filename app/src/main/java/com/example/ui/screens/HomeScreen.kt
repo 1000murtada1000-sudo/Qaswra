@@ -414,7 +414,6 @@ fun HomeScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .defaultMinSize(minHeight = 168.dp)
                         .clip(RoundedCornerShape(22.dp))
                         .background(heroBgBrush),
                 ) {
@@ -431,22 +430,21 @@ fun HomeScreen(
                         colorFilter = ColorFilter.tint(StudioColors.Cyan.copy(alpha = 0.12f)),
                         modifier = Modifier
                             .align(Alignment.CenterEnd)
-                            .padding(end = 18.dp)
-                            .size(132.dp)
+                            .padding(end = 10.dp)
+                            .size(100.dp)
                             .alpha(0.85f),
                     )
 
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                            .padding(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        // Row 1: Unconstrained Identity (Logo + single-line unclipped LTR "Sonix ✦" + full tagline + Notification Bell)
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             val logoBorderBrush = remember {
                                 Brush.linearGradient(
@@ -457,11 +455,11 @@ fun HomeScreen(
                                 shape = RoundedCornerShape(16.dp),
                                 color = Color(0xFFFFFFFE),
                                 border = BorderStroke(
-                                    width = 1.5.dp,
+                                    width = 1.dp,
                                     brush = logoBorderBrush,
                                 ),
-                                shadowElevation = 8.dp,
-                                modifier = Modifier.size(54.dp),
+                                shadowElevation = 4.dp,
+                                modifier = Modifier.size(38.dp),
                             ) {
                                 Image(
                                     bitmap = ImageBitmap.imageResource(R.drawable.sonix_primary_logo),
@@ -470,18 +468,18 @@ fun HomeScreen(
                                     filterQuality = FilterQuality.High,
                                     modifier = Modifier
                                         .fillMaxSize()
-                                        .clip(RoundedCornerShape(15.dp)),
+                                        .clip(RoundedCornerShape(11.dp)),
                                 )
                             }
 
                             Column(
                                 modifier = Modifier.weight(1f),
-                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                                verticalArrangement = Arrangement.spacedBy(0.dp),
                             ) {
                                 CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                                     Text(
                                         text = "Sonix ✦",
-                                        style = MaterialTheme.typography.headlineSmall.copy(
+                                        style = MaterialTheme.typography.titleMedium.copy(
                                             fontWeight = FontWeight.ExtraBold,
                                             textDirection = TextDirection.Ltr,
                                             letterSpacing = 0.4.sp,
@@ -493,8 +491,10 @@ fun HomeScreen(
                                 }
                                 Text(
                                     text = t(lang, "studio_tagline"),
-                                    style = MaterialTheme.typography.bodySmall,
+                                    style = MaterialTheme.typography.labelSmall,
                                     color = StudioColors.Cyan,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
                                 )
                             }
 
@@ -509,8 +509,8 @@ fun HomeScreen(
                                     contentColor = if (badgeCount > 0) StudioColors.Amber else StudioColors.Cyan,
                                 ),
                                 modifier = Modifier
-                                    .size(48.dp)
-                                    .lit(bellInteraction, StudioColors.Cyan, cornerRadius = 24.dp)
+                                    .size(36.dp)
+                                    .lit(bellInteraction, StudioColors.Cyan, cornerRadius = 18.dp)
                                     .testTag("home_notifications_button"),
                             ) {
                                 BadgedBox(
@@ -534,16 +534,16 @@ fun HomeScreen(
                                     Icon(
                                         imageVector = Icons.Rounded.Notifications,
                                         contentDescription = t(lang, "notifications_title"),
+                                        modifier = Modifier.size(20.dp),
                                     )
                                 }
                             }
                         }
 
-                        // Row 2: Balanced utility bar (Guest / Sign-In chip + Language badge)
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             val authChipInteraction = remember { MutableInteractionSource() }
                             Surface(
@@ -553,15 +553,15 @@ fun HomeScreen(
                                 color = StudioColors.ElevatedSurface.copy(alpha = 0.92f),
                                 border = BorderStroke(1.dp, StudioColors.BorderBright),
                                 modifier = Modifier
-                                    .weight(1f, fill = false)
-                                    .defaultMinSize(minHeight = 48.dp)
-                                    .lit(authChipInteraction, MaterialTheme.colorScheme.primary, cornerRadius = 24.dp)
+                                    .weight(1f)
+                                    .height(34.dp)
+                                    .lit(authChipInteraction, MaterialTheme.colorScheme.primary, cornerRadius = 17.dp)
                                     .testTag("home_auth_chip"),
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                                 ) {
                                     Icon(
                                         imageVector = if (uiState.authSession is AuthSession.SignedIn) {
@@ -571,11 +571,14 @@ fun HomeScreen(
                                         },
                                         contentDescription = userLabel,
                                         tint = if (uiState.authSession is AuthSession.SignedIn) StudioColors.Cyan else StudioColors.Amber,
-                                        modifier = Modifier.size(16.dp),
+                                        modifier = Modifier.size(14.dp),
                                     )
                                     Text(
                                         text = userLabel,
-                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                        ),
                                         color = StudioColors.TextPrimary,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
@@ -583,15 +586,13 @@ fun HomeScreen(
                                 }
                             }
 
-                            Spacer(Modifier.width(10.dp))
-
                             LanguageBadgeButton(
                                 currentLanguage = lang,
                                 onClick = { langDialogOpen = true },
+                                compact = true,
                             )
                         }
 
-                        // Row 3: Live Audio Waveform Visualizer (isolated telemetry collector)
                         HomeLiveWaveformSection(
                             playbackFlow = viewModel.playbackTelemetry,
                             recorderFlow = viewModel.recorderTelemetry,
@@ -789,7 +790,7 @@ fun HomeScreen(
 
             val aiVoiceFamily = families.first { it.id == "ai_voice" }
             item(key = "family_card_ai_voice", contentType = "family_card") {
-                val columns = 2
+                val columns = 3
                 val rows = aiVoiceFamily.tools.chunked(columns)
                 Card(
                     shape = RoundedCornerShape(20.dp),
@@ -823,7 +824,7 @@ fun HomeScreen(
                                         accent = tile.accent,
                                         testTag = "home_tile_${tile.id}",
                                         hasInfo = tile.infoKey != null,
-                                        aspectRatio = 1f,
+                                        aspectRatio = 1.05f,
                                         onInfoClick = {
                                             tile.infoKey?.let { key ->
                                                 activeToolInfo = t(lang, tile.titleKey) to t(lang, key)
@@ -1656,7 +1657,7 @@ private fun HomeLiveWaveformSection(
         accentColor = accentColor,
         modifier = Modifier
             .fillMaxWidth()
-            .height(44.dp)
+            .height(32.dp)
             .testTag("home_waveform"),
     )
 }
