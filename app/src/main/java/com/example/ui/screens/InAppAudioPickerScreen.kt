@@ -82,7 +82,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.example.audio.AudioFileUploader
-import com.example.audio.AudioPlayerManager
 import com.example.audio.AudioUploadOutcome
 import com.example.audio.formatDurationMs
 import com.example.data.MediaStoreAudioRepository
@@ -192,6 +191,7 @@ fun InAppAudioPickerScreen(
     var previewCopyProgress by remember { mutableStateOf<Float?>(null) }
     var previewCopyIndeterminate by remember { mutableStateOf(false) }
     var previewCopyName by remember { mutableStateOf<String?>(null) }
+    var globalPreviewWasPlaying by remember { mutableStateOf(false) }
 
     fun stopPreview() {
         previewCopyJob?.cancel()
@@ -199,7 +199,8 @@ fun InAppAudioPickerScreen(
         previewCopyProgress = null
         previewCopyIndeterminate = false
         previewCopyName = null
-        AudioPlayerManager.stop("picker_preview")
+        globalPreviewWasPlaying = false
+        viewModel.stopToolPreview()
         runCatching { previewCachedFile?.delete() }
         previewCachedFile = null
         previewingUri = null
@@ -217,21 +218,6 @@ fun InAppAudioPickerScreen(
         previewCopyJob = scope.launch {
             try {
                 val uri = Uri.parse(item.uriString)
-                val directOk = AudioPlayerManager.playUri(
-                    context = context,
-                    uri = uri,
-                    tag = "picker_preview",
-                    onCompletion = { stopPreview() },
-                    onError = { _ ->
-                        stopPreview()
-                        viewModel.showStatusBanner(t(lang, "audio_preview_error"))
-                    },
-                )
-                if (directOk) {
-                    previewCopyProgress = null
-                    return@launch
-                }
-
                 previewCopyProgress = 0f
                 previewCopyIndeterminate = false
                 val uploadOutcome = AudioFileUploader.copyAudioUriToCacheDetailed(context, uri) { info ->
@@ -249,16 +235,7 @@ fun InAppAudioPickerScreen(
                 previewCopyProgress = null
                 previewCopyIndeterminate = false
                 previewCachedFile = uploaded.file
-                val ok = AudioPlayerManager.playFile(
-                    file = uploaded.file,
-                    tag = "picker_preview",
-                    onCompletion = { stopPreview() },
-                    onError = { _ ->
-                        stopPreview()
-                        viewModel.showStatusBanner(t(lang, "audio_preview_error"))
-                    },
-                )
-                if (!ok) {
+                viewModel.previewFileInGlobalPlayer(uploaded.file) {
                     stopPreview()
                     viewModel.showStatusBanner(t(lang, "audio_preview_error"))
                 }
@@ -268,6 +245,15 @@ fun InAppAudioPickerScreen(
                 stopPreview()
                 viewModel.showStatusBanner(t(lang, "audio_preview_error"))
             }
+        }
+    }
+
+    LaunchedEffect(uiState.isToolPreviewPlaying) {
+        if (uiState.isToolPreviewPlaying) {
+            globalPreviewWasPlaying = true
+        } else if (globalPreviewWasPlaying) {
+            globalPreviewWasPlaying = false
+            previewingUri = null
         }
     }
 

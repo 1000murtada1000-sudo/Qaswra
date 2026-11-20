@@ -52,7 +52,7 @@ sealed interface StudioRoute {
     data object AiVoiceStudio : StudioRoute
 
     @Serializable
-    data object VoiceTransformer : StudioRoute
+    data object VoiceChanger : StudioRoute
 
     @Serializable
     data object Settings : StudioRoute
@@ -107,9 +107,6 @@ sealed interface StudioRoute {
 
     @Serializable
     data class NotificationDetail(val entryId: String) : StudioRoute
-
-    @Serializable
-    data object SmartQaLab : StudioRoute
 
     @Serializable
     data object AutoSilenceRemover : StudioRoute

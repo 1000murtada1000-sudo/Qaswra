@@ -79,7 +79,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.diagnostics.AppDiagnosticLog
-import com.example.diagnostics.QaIssueReport
 import com.example.model.AppLanguage
 import com.example.network.AppUpdateManager
 import com.example.studio.ui.lit
@@ -94,40 +93,15 @@ import com.example.i18n.t
 private const val SUPPORT_EMAIL = "1000iraq1000@gmail.com"
 
 @Composable
-fun SmartQaLabScreen(
+fun SupportUpdatesSection(
     uiState: StudioUiState,
     viewModel: StudioViewModel,
-    onBack: () -> Unit,
-) {
-    val lang = uiState.language
-    StudioScrollColumn {
-        StudioFocusTopBar(
-            title = t(lang, "support_lab_section_title"),
-            subtitle = t(lang, "qa_card_title"),
-            language = lang,
-            onBack = onBack,
-        )
-
-        SupportUpdatesQaSection(
-            uiState = uiState,
-            viewModel = viewModel,
-            onOpenFullLab = null,
-        )
-    }
-}
-
-@Composable
-fun SupportUpdatesQaSection(
-    uiState: StudioUiState,
-    viewModel: StudioViewModel,
-    onOpenFullLab: (() -> Unit)? = null,
     collapsible: Boolean = false,
     initiallyExpanded: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     val lang = uiState.language
     val context = LocalContext.current
-    val qaState by viewModel.qaScanState.collectAsStateWithLifecycle()
     val currentVersion = remember(context) { AppUpdateManager.getCurrentAppVersionName(context) }
 
     var expanded by rememberSaveable(collapsible, initiallyExpanded) {
@@ -149,7 +123,7 @@ fun SupportUpdatesQaSection(
                     border = BorderStroke(1.dp, StudioColors.Emerald.copy(alpha = 0.55f)),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .testTag("support_qa_feedback_banner"),
+                        .testTag("support_feedback_banner"),
                 ) {
                     Row(
                         modifier = Modifier
@@ -189,387 +163,7 @@ fun SupportUpdatesQaSection(
                 modifier = Modifier.fillMaxWidth(),
             )
 
-            // 2. الإبلاغ عن مشكلة (Report a Problem & Smart QA Lab)
-            Card(
-                shape = RoundedCornerShape(18.dp),
-                colors = CardDefaults.cardColors(containerColor = StudioColors.ElevatedSurface),
-                border = BorderStroke(
-                    1.dp,
-                    when {
-                        qaState.isRunning -> StudioColors.Cyan.copy(alpha = 0.7f)
-                        qaState.completed && qaState.issues.isEmpty() -> StudioColors.Emerald.copy(alpha = 0.55f)
-                        qaState.issues.isNotEmpty() -> StudioColors.Amber.copy(alpha = 0.6f)
-                        else -> StudioColors.BorderBright
-                    },
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("smart_qa_lab_card"),
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = StudioColors.Cyan.copy(alpha = 0.14f),
-                                border = BorderStroke(1.dp, StudioColors.Cyan.copy(alpha = 0.4f)),
-                                modifier = Modifier.size(36.dp),
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Science,
-                                        contentDescription = t(lang, "report_problem_title"),
-                                        tint = StudioColors.Cyan,
-                                        modifier = Modifier.size(19.dp),
-                                    )
-                                }
-                            }
-                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                Text(
-                                    text = t(lang, "report_problem_title"),
-                                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                                    color = StudioColors.TextPrimary,
-                                )
-                                Text(
-                                    text = t(lang, "qa_card_title"),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = StudioColors.Cyan,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                        }
-
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            Surface(
-                                shape = RoundedCornerShape(999.dp),
-                                color = StudioColors.BgMid,
-                                border = BorderStroke(1.dp, StudioColors.Cyan.copy(alpha = 0.5f)),
-                            ) {
-                                Text(
-                                    text = "#${qaState.scenariosChecked}",
-                                    style = TelemetryTextStyle.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold),
-                                    color = StudioColors.Cyan,
-                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
-                                )
-                            }
-                            if (onOpenFullLab != null) {
-                                val openLabInt = remember { MutableInteractionSource() }
-                                IconButton(
-                                    onClick = onOpenFullLab,
-                                    interactionSource = openLabInt,
-                                    modifier = Modifier
-                                        .size(48.dp)
-                                        .lit(openLabInt, StudioColors.Cyan, cornerRadius = 24.dp)
-                                        .testTag("open_smart_qa_lab_button"),
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.AutoMirrored.Rounded.OpenInNew,
-                                        contentDescription = t(lang, "qa_card_title"),
-                                        tint = StudioColors.Cyan,
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    Text(
-                        text = t(lang, "qa_card_desc"),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = StudioColors.TextSecondary,
-                    )
-
-                // Side-by-Side Consent Start & Immediate Stop Buttons
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    val startInt = remember { MutableInteractionSource() }
-                    Button(
-                        onClick = { viewModel.startSmartQaScan() },
-                        enabled = !qaState.isRunning,
-                        interactionSource = startInt,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = StudioColors.Cyan,
-                            contentColor = StudioColors.BgTop,
-                            disabledContainerColor = StudioColors.ElevatedSurface,
-                            disabledContentColor = StudioColors.TextMuted,
-                        ),
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier
-                            .weight(1.35f)
-                            .defaultMinSize(minHeight = 48.dp)
-                            .lit(startInt, StudioColors.Cyan, cornerRadius = 12.dp)
-                            .testTag("qa_start_consent_button"),
-                    ) {
-                        if (qaState.isRunning) {
-                            CircularProgressIndicator(
-                                color = StudioColors.Cyan,
-                                strokeWidth = 2.dp,
-                                modifier = Modifier.size(16.dp),
-                            )
-                        } else {
-                            Icon(
-                                imageVector = Icons.Rounded.PlayArrow,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp),
-                            )
-                        }
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            text = t(lang, "qa_start_consent_btn"),
-                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-
-                    val stopInt = remember { MutableInteractionSource() }
-                    OutlinedButton(
-                        onClick = { viewModel.stopSmartQaScan() },
-                        enabled = qaState.isRunning,
-                        interactionSource = stopInt,
-                        border = BorderStroke(
-                            1.dp,
-                            if (qaState.isRunning) StudioColors.RoseBright else StudioColors.Border,
-                        ),
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = StudioColors.RoseBright,
-                            disabledContentColor = StudioColors.TextMuted,
-                        ),
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier
-                            .weight(1f)
-                            .defaultMinSize(minHeight = 48.dp)
-                            .lit(stopInt, StudioColors.RoseBright, cornerRadius = 12.dp)
-                            .testTag("qa_stop_now_button"),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Stop,
-                            contentDescription = t(lang, "qa_stop_now_btn"),
-                            modifier = Modifier.size(18.dp),
-                        )
-                        Spacer(Modifier.width(4.dp))
-                        Text(
-                            text = t(lang, "qa_stop_now_btn"),
-                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                }
-
-                // Live Progress & Telemetry Metrics Strip
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    val progressBarColor = if (qaState.issues.isNotEmpty()) StudioColors.Amber else StudioColors.Cyan
-                    val progressBarMod = Modifier
-                        .fillMaxWidth()
-                        .height(7.dp)
-                        .clip(RoundedCornerShape(4.dp))
-                        .testTag("qa_progress_bar")
-                    if (qaState.isRunning) {
-                        LinearProgressIndicator(
-                            color = progressBarColor,
-                            trackColor = StudioColors.BgTop,
-                            modifier = progressBarMod,
-                        )
-                    } else {
-                        val idleFraction = if (qaState.completed && qaState.scenariosChecked > 0) 1f else 0f
-                        LinearProgressIndicator(
-                            progress = { idleFraction },
-                            color = progressBarColor,
-                            trackColor = StudioColors.BgTop,
-                            modifier = progressBarMod,
-                        )
-                    }
-
-                    Text(
-                        text = if (lang == AppLanguage.EN) qaState.currentPhaseLabelEn else qaState.currentPhaseLabelAr,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = StudioColors.TextSecondary,
-                    )
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    QaTelemetryTile(
-                        label = if (lang == AppLanguage.EN) "Checked" else "تم فحصها",
-                        value = "${qaState.scenariosChecked}",
-                        color = StudioColors.Cyan,
-                        modifier = Modifier.weight(1f),
-                    )
-                    QaTelemetryTile(
-                        label = if (lang == AppLanguage.EN) "Passed" else "ناجحة",
-                        value = "${qaState.passedChecksCount}",
-                        color = StudioColors.Emerald,
-                        modifier = Modifier.weight(1f),
-                    )
-                    QaTelemetryTile(
-                        label = if (lang == AppLanguage.EN) "Issues" else "مشاكل",
-                        value = "${qaState.issues.size}",
-                        color = if (qaState.issues.isNotEmpty()) StudioColors.RoseBright else StudioColors.Emerald,
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-
-                // Numbered Issue Documentation or Clean Pass Banner
-                if (qaState.completed && qaState.issues.isEmpty() && !qaState.stoppedByUser) {
-                    Surface(
-                        shape = RoundedCornerShape(14.dp),
-                        color = StudioColors.Emerald.copy(alpha = 0.14f),
-                        border = BorderStroke(1.dp, StudioColors.Emerald.copy(alpha = 0.5f)),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("qa_no_issues_banner"),
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.CheckCircle,
-                                contentDescription = null,
-                                tint = StudioColors.Emerald,
-                                modifier = Modifier.size(20.dp),
-                            )
-                            Text(
-                                text = t(lang, "qa_no_issues"),
-                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
-                                color = StudioColors.Emerald,
-                            )
-                        }
-                    }
-                } else if (qaState.issues.isNotEmpty()) {
-                    HorizontalDivider(color = StudioColors.Border)
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("qa_numbered_issues_list"),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        val previewIssues = qaState.issues.take(20)
-                        previewIssues.forEach { issue ->
-                            QaIssueNumberedCard(issue = issue, lang = lang)
-                        }
-                        if (qaState.issues.size > previewIssues.size) {
-                            Text(
-                                text = if (lang == AppLanguage.EN) {
-                                    "+${qaState.issues.size - previewIssues.size} more issues included in full report."
-                                } else {
-                                    "+${qaState.issues.size - previewIssues.size} مشاكل إضافية مرفقة في التقرير الكامل."
-                                },
-                                style = MaterialTheme.typography.labelSmall,
-                                color = StudioColors.Amber,
-                            )
-                        }
-                    }
-                }
-
-                // Side-by-Side Copy Full Report & Email Support Buttons
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    val copyInt = remember { MutableInteractionSource() }
-                    OutlinedButton(
-                        onClick = {
-                            val report = viewModel.getSmartQaFullReport()
-                            copyTextToClipboard(context, "Sonix QA Report", report)
-                            inlineFeedback = if (lang == AppLanguage.EN) {
-                                "Full QA & diagnostics report copied to clipboard."
-                            } else {
-                                "تم نسخ التقرير الفني الشامل إلى الحافظة."
-                            }
-                        },
-                        interactionSource = copyInt,
-                        border = BorderStroke(1.dp, StudioColors.Cyan.copy(alpha = 0.65f)),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = StudioColors.Cyan),
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier
-                            .weight(1f)
-                            .defaultMinSize(minHeight = 48.dp)
-                            .lit(copyInt, StudioColors.Cyan, cornerRadius = 12.dp)
-                            .testTag("qa_copy_report_button"),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.ContentCopy,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            text = t(lang, "qa_copy_report_btn"),
-                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-
-                    val emailInt = remember { MutableInteractionSource() }
-                    Button(
-                        onClick = {
-                            val report = viewModel.getSmartQaFullReport()
-                            val subject = if (lang == AppLanguage.EN) {
-                                "Sonix ✦ Smart QA & Diagnostics Report (v$currentVersion)"
-                            } else {
-                                "تقرير الفحص الذكي لتطبيق Sonix ✦ (إصدار $currentVersion)"
-                            }
-                            inlineFeedback = launchSupportEmail(
-                                context = context,
-                                subject = subject,
-                                body = report,
-                                lang = lang,
-                            )
-                        },
-                        interactionSource = emailInt,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = StudioColors.Violet,
-                            contentColor = StudioColors.BgTop,
-                        ),
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier
-                            .weight(1f)
-                            .defaultMinSize(minHeight = 48.dp)
-                            .lit(emailInt, StudioColors.Violet, cornerRadius = 12.dp)
-                            .testTag("qa_email_support_button"),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Email,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            text = t(lang, "qa_email_support_btn"),
-                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                }
-            }
-            }
-
-            // 3. التواصل مع الدعم (Customer Support)
+            // 2. التواصل مع الدعم (Customer Support)
             CustomerSupportClassicCard(
                 lang = lang,
                 supportMessage = supportMessage,
@@ -582,7 +176,6 @@ fun SupportUpdatesQaSection(
                         lang = lang,
                         userMessage = supportMessage,
                         attachDiagnostics = attachDiagnostics,
-                        qaReport = viewModel.getSmartQaFullReport(),
                         currentVersion = currentVersion,
                     )
                     val subject = if (lang == AppLanguage.EN) {
@@ -709,7 +302,7 @@ fun SupportUpdatesQaSection(
         Column(
             modifier = modifier
                 .fillMaxWidth()
-                .testTag("support_updates_qa_section"),
+                .testTag("support_updates_section"),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             innerContent()
@@ -1080,137 +673,10 @@ private fun CustomerSupportClassicCard(
     }
 }
 
-@Composable
-private fun QaTelemetryTile(
-    label: String,
-    value: String,
-    color: Color,
-    modifier: Modifier = Modifier,
-) {
-    Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = StudioColors.BgMid,
-        border = BorderStroke(1.dp, StudioColors.Border),
-        modifier = modifier,
-    ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            Text(
-                text = value,
-                style = TelemetryTextStyle.copy(fontWeight = FontWeight.Bold),
-                color = color,
-                maxLines = 1,
-            )
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelSmall,
-                color = StudioColors.TextSecondary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
-}
-
-@Composable
-private fun QaIssueNumberedCard(
-    issue: QaIssueReport,
-    lang: AppLanguage,
-) {
-    val issueHeader = if (lang == AppLanguage.EN) "Issue #${issue.number}" else "مشكلة #${issue.number}"
-    val locationLabel = if (lang == AppLanguage.EN) "Location:" else "المكان:"
-    val causeLabel = if (lang == AppLanguage.EN) "Cause:" else "السبب التقني:"
-    val tipLabel = if (lang == AppLanguage.EN) "Recommendation:" else "التوجيه للأفضل:"
-
-    Surface(
-        shape = RoundedCornerShape(14.dp),
-        color = StudioColors.BgMid,
-        border = BorderStroke(1.dp, StudioColors.Amber.copy(alpha = 0.5f)),
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag("qa_issue_card_${issue.number}"),
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    Icon(
-                        imageVector = if (issue.errorCode.contains("WARN", ignoreCase = true)) {
-                            Icons.Rounded.WarningAmber
-                        } else {
-                            Icons.Rounded.BugReport
-                        },
-                        contentDescription = null,
-                        tint = StudioColors.Amber,
-                        modifier = Modifier.size(16.dp),
-                    )
-                    Text(
-                        text = issueHeader,
-                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
-                        color = StudioColors.Amber,
-                    )
-                }
-
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = StudioColors.Rose.copy(alpha = 0.16f),
-                    border = BorderStroke(1.dp, StudioColors.Rose.copy(alpha = 0.45f)),
-                ) {
-                    Text(
-                        text = issue.errorCode,
-                        style = TelemetryTextStyle.copy(fontSize = 10.sp),
-                        color = StudioColors.RoseBright,
-                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
-                    )
-                }
-            }
-
-            Text(
-                text = "$locationLabel ${issue.toolOrScreen} → ${issue.functionName}",
-                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-                color = StudioColors.Cyan,
-            )
-            Text(
-                text = "${issue.actionDetail}\n$causeLabel ${issue.technicalCause}",
-                style = MaterialTheme.typography.bodySmall,
-                color = StudioColors.TextSecondary,
-            )
-            Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = StudioColors.Emerald.copy(alpha = 0.10f),
-                border = BorderStroke(1.dp, StudioColors.Emerald.copy(alpha = 0.35f)),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(
-                    text = "$tipLabel ${issue.recommendation}",
-                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
-                    color = StudioColors.Emerald,
-                    modifier = Modifier.padding(8.dp),
-                )
-            }
-        }
-    }
-}
-
 private fun buildSupportEmailBody(
     lang: AppLanguage,
     userMessage: String,
     attachDiagnostics: Boolean,
-    qaReport: String,
     currentVersion: String,
 ): String = buildString {
     appendLine("Sonix ✦ Studio Support Request (v$currentVersion)")
@@ -1223,9 +689,8 @@ private fun buildSupportEmailBody(
         appendLine()
     }
     if (attachDiagnostics) {
-        appendLine(qaReport)
         val diagLines = AppDiagnosticLog.entries.value.take(5)
-        if (diagLines.isNotEmpty() && !qaReport.contains("Runtime Diagnostic Log")) {
+        if (diagLines.isNotEmpty()) {
             appendLine()
             appendLine("--- Recent Diagnostics ---")
             diagLines.forEach { entry ->

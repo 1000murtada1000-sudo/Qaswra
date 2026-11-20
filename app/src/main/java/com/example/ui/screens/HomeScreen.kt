@@ -215,7 +215,7 @@ fun HomeScreen(
                         titleKey = "tool_voice_morph",
                         icon = Icons.Rounded.SpatialAudioOff,
                         accent = StudioColors.Violet,
-                        route = StudioRoute.VoiceTransformer,
+                        route = StudioRoute.VoiceChanger,
                     ),
                     HomeToolTile(
                         id = "smart_engineer",
@@ -1056,10 +1056,9 @@ fun HomeScreen(
             }
 
             item(key = "support_updates_qa_section", contentType = "support_updates_qa_section") {
-                SupportUpdatesQaSection(
+                SupportUpdatesSection(
                     uiState = uiState,
                     viewModel = viewModel,
-                    onOpenFullLab = { onNavigate(StudioRoute.SmartQaLab) },
                     collapsible = true,
                     initiallyExpanded = false,
                 )

@@ -1614,58 +1614,76 @@ fun TextToSpeechStudioScreen(
 }
 
 @Composable
-fun VoiceTransformerScreen(
+fun VoiceChangerScreen(
     uiState: StudioUiState,
     viewModel: StudioViewModel,
     onBack: () -> Unit,
 ) {
     val lang = uiState.language
-    var selectedPersona by remember { mutableStateOf<TtsVoicePersona?>(null) }
-    var selectedAcousticMode by remember { mutableStateOf(TtsPersonaAcousticMode.NATURAL) }
-    var selectedVoiceLanguage by rememberSaveable { mutableStateOf(AiVoiceLanguage.AR) }
-    var selectedArabicDialect by rememberSaveable { mutableStateOf(AiArabicDialect.MSA) }
-    var selectedEnglishAccent by rememberSaveable { mutableStateOf(AiEnglishAccent.AMERICAN) }
-    var targetText by rememberSaveable { mutableStateOf("") }
-    var pitchSemitones by remember { mutableFloatStateOf(0f) }
-    var formantShift by remember { mutableFloatStateOf(1.0f) }
-    var warmthDb by remember { mutableFloatStateOf(0f) }
-    var presenceDb by remember { mutableFloatStateOf(0f) }
-    var mix by remember { mutableFloatStateOf(0f) }
+    val voiceChangerPersonas = remember {
+        val cartoonBase = TTS_VOICE_PERSONAS.first { it.id == "male_modern_energetic" }
+        listOf(
+            TTS_VOICE_PERSONAS.first { it.id == "male_doc_deep" },
+            TTS_VOICE_PERSONAS.first { it.id == "female_story_soft" },
+            TTS_VOICE_PERSONAS.first { it.id == "child_voice" },
+            TTS_VOICE_PERSONAS.first { it.id == "female_news_anchor" },
+            TTS_VOICE_PERSONAS.first { it.id == "male_promo_dramatic" },
+            cartoonBase.copy(
+                id = "cartoon_voice",
+                titleAr = "صوت كرتوني",
+                titleEn = "Cartoon Voice",
+                descAr = "نبرة مرحة ومبالغ فيها بطابع كرتوني.",
+                descEn = "A playful, stylized cartoon-like vocal character.",
+                defaultPitchSemitones = 4.2f,
+                defaultFormantShift = 1.24f,
+                defaultWarmthDb = 1.2f,
+                defaultPresenceDb = 2.8f,
+                geminiDirectionPromptAr = "تحدث بطابع كرتوني مرح وواضح، مع الحفاظ على الكلمات ومخارج الحروف.",
+            ),
+        )
+    }
+    var selectedPersona by remember { mutableStateOf<TtsVoicePersona?>(voiceChangerPersonas.first()) }
+    var selectedAcousticMode by remember { mutableStateOf(voiceChangerPersonas.first().defaultAcousticMode) }
+    var pitchSemitones by remember { mutableFloatStateOf(voiceChangerPersonas.first().defaultPitchSemitones) }
+    var formantShift by remember { mutableFloatStateOf(voiceChangerPersonas.first().defaultFormantShift) }
+    var warmthDb by remember { mutableFloatStateOf(voiceChangerPersonas.first().defaultWarmthDb) }
+    var presenceDb by remember { mutableFloatStateOf(voiceChangerPersonas.first().defaultPresenceDb) }
+    var mix by remember { mutableFloatStateOf(1f) }
     var saveDraftDialogOpen by remember { mutableStateOf(false) }
     var infoOpen by remember { mutableStateOf(false) }
     var selectedLiveEffect by remember { mutableStateOf(uiState.liveVoiceEffect) }
     var preferVmUndo by remember { mutableStateOf(false) }
     var showMicPermissionRationale by remember { mutableStateOf(false) }
-    val runVoxGeneration: (Boolean) -> Unit = { previewOnly ->
-        if (previewOnly) {
-            viewModel.previewCharacterVoiceWithVox(
-                text = targetText,
-                language = selectedVoiceLanguage,
-                dialect = selectedArabicDialect,
-                englishAccent = selectedEnglishAccent,
-                persona = selectedPersona,
-                acousticMode = selectedAcousticMode,
-                pitchSemitones = pitchSemitones,
-                formantShift = formantShift,
-                warmthDb = warmthDb,
-                presenceDb = presenceDb,
-                styleIntensity = mix,
-            )
-        } else {
-            viewModel.applyCharacterVoiceWithVox(
-                text = targetText,
-                language = selectedVoiceLanguage,
-                dialect = selectedArabicDialect,
-                englishAccent = selectedEnglishAccent,
-                persona = selectedPersona,
-                acousticMode = selectedAcousticMode,
-                pitchSemitones = pitchSemitones,
-                formantShift = formantShift,
-                warmthDb = warmthDb,
-                presenceDb = presenceDb,
-                styleIntensity = mix,
-            )
-        }
+
+    fun selectedVoiceLabel(): String = selectedPersona?.let {
+        if (lang == AppLanguage.EN) it.titleEn else it.titleAr
+    } ?: if (lang == AppLanguage.EN) "Natural voice" else "الصوت الطبيعي"
+
+    fun previewSelectedVoice() {
+        viewModel.previewVoiceWithAi(
+            preset = null,
+            targetLabel = selectedVoiceLabel(),
+            pitchSemitones = pitchSemitones * mix,
+            formantShift = 1f + (formantShift - 1f) * mix,
+            warmthDb = warmthDb * mix,
+            presenceDb = presenceDb * mix,
+            targetPersona = selectedPersona,
+            acousticMode = selectedAcousticMode,
+        )
+    }
+
+    fun applySelectedVoice() {
+        preferVmUndo = true
+        viewModel.convertVoiceWithAi(
+            preset = null,
+            targetLabel = selectedVoiceLabel(),
+            pitchSemitones = pitchSemitones * mix,
+            formantShift = 1f + (formantShift - 1f) * mix,
+            warmthDb = warmthDb * mix,
+            presenceDb = presenceDb * mix,
+            targetPersona = selectedPersona,
+            acousticMode = selectedAcousticMode,
+        )
     }
     val voiceHistory = rememberEditHistory(
         VoiceTransformSnapshot(
@@ -1698,7 +1716,7 @@ fun VoiceTransformerScreen(
     )
 
     fun applyVoiceSnap(snap: VoiceTransformSnapshot) {
-        selectedPersona = snap.personaId?.let { id -> TTS_VOICE_PERSONAS.firstOrNull { it.id == id } }
+        selectedPersona = snap.personaId?.let { id -> voiceChangerPersonas.firstOrNull { it.id == id } }
         selectedAcousticMode = snap.acousticMode
         pitchSemitones = snap.pitchSemitones
         formantShift = snap.formantShift
@@ -1734,15 +1752,17 @@ fun VoiceTransformerScreen(
             val personaId = restored.stringParams["personaId"]
             val legacyPresetId = restored.stringParams["presetId"]
             val modeName = restored.stringParams["acousticMode"]
-            selectedPersona = personaId?.let { id -> TTS_VOICE_PERSONAS.firstOrNull { it.id == id } }
+            selectedPersona = personaId?.let { id ->
+                voiceChangerPersonas.firstOrNull { it.id == id }
+            }
                 ?: when (legacyPresetId) {
-                    "male_luxury" -> TTS_VOICE_PERSONAS.firstOrNull { it.id == "male_doc_deep" }
-                    "male_calm" -> TTS_VOICE_PERSONAS.firstOrNull { it.id == "male_podcast_warm" }
-                    "female_soft" -> TTS_VOICE_PERSONAS.firstOrNull { it.id == "female_story_soft" }
-                    "female_balanced" -> TTS_VOICE_PERSONAS.firstOrNull { it.id == "female_podcast_host" }
-                    "child" -> TTS_VOICE_PERSONAS.firstOrNull { it.id == "child_voice" }
+                    "male_luxury" -> voiceChangerPersonas.firstOrNull { it.id == "male_doc_deep" }
+                    "male_calm" -> voiceChangerPersonas.firstOrNull { it.id == "male_doc_deep" }
+                    "female_soft" -> voiceChangerPersonas.firstOrNull { it.id == "female_story_soft" }
+                    "female_balanced" -> voiceChangerPersonas.firstOrNull { it.id == "female_news_anchor" }
+                    "child" -> voiceChangerPersonas.firstOrNull { it.id == "child_voice" }
                     else -> null
-                }
+                } ?: voiceChangerPersonas.first()
             selectedAcousticMode = modeName?.let { runCatching { TtsPersonaAcousticMode.valueOf(it) }.getOrNull() }
                 ?: selectedPersona?.defaultAcousticMode
                 ?: TtsPersonaAcousticMode.NATURAL
@@ -1770,8 +1790,8 @@ fun VoiceTransformerScreen(
             if (latestHasAudio) {
                 viewModel.saveToolSessionToCache(
                     toolId = "voice_transformer",
-                    titleAr = "محول الصوت والشخصيات",
-                    titleEn = "Voice Transformer",
+                    titleAr = "مغيّر الأصوات",
+                    titleEn = "Voice Changer",
                     summaryAr = "${"%.1f".format(latestPitch)} st / ${(latestMix * 100f).toInt()}%",
                     summaryEn = "${"%.1f".format(latestPitch)} st / ${(latestMix * 100f).toInt()}%",
                     floatParams = mapOf(
@@ -1996,6 +2016,7 @@ fun VoiceTransformerScreen(
                 )
                 VoiceProfileDropdown(
                     selectedPersona = selectedPersona,
+                    personas = voiceChangerPersonas,
                     language = lang,
                     onSelectPersona = { persona ->
                         preferVmUndo = false
@@ -2028,34 +2049,6 @@ fun VoiceTransformerScreen(
                         voiceHistory.commit(currentVoiceSnap(acousticMode = mode))
                     },
                 )
-                VoiceModeDropdown(
-                    label = if (lang == AppLanguage.EN) "Speech language" else "لغة النطق",
-                    selected = selectedVoiceLanguage,
-                    options = AiVoiceLanguage.entries,
-                    optionLabel = { if (lang == AppLanguage.EN) it.titleEn else it.titleAr },
-                    testTag = "voice_language_dropdown",
-                    onSelect = { selectedVoiceLanguage = it },
-                )
-                if (selectedVoiceLanguage == AiVoiceLanguage.AR) {
-                    VoiceModeDropdown(
-                        label = if (lang == AppLanguage.EN) "Arabic dialect" else "اللهجة العربية",
-                        selected = selectedArabicDialect,
-                        options = AiArabicDialect.entries,
-                        optionLabel = { if (lang == AppLanguage.EN) it.titleEn else it.titleAr },
-                        testTag = "voice_arabic_dialect_dropdown",
-                        onSelect = { selectedArabicDialect = it },
-                    )
-                }
-                if (selectedVoiceLanguage == AiVoiceLanguage.EN) {
-                    VoiceModeDropdown(
-                        label = if (lang == AppLanguage.EN) "English accent" else "اللكنة الإنجليزية",
-                        selected = selectedEnglishAccent,
-                        options = AiEnglishAccent.entries,
-                        optionLabel = { if (lang == AppLanguage.EN) it.titleEn else it.titleAr },
-                        testTag = "voice_english_accent_dropdown",
-                        onSelect = { selectedEnglishAccent = it },
-                    )
-                }
             }
         }
 
@@ -2165,12 +2158,13 @@ fun VoiceTransformerScreen(
             }
         }
 
-        // Deterministic VoxCPM2 generation with client-side audio tuning.
         Card(
             shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(containerColor = StudioColors.CardSurface),
-            border = BorderStroke(1.dp, StudioColors.Cyan.copy(alpha = 0.55f)),
-            modifier = Modifier.fillMaxWidth(),
+            border = BorderStroke(1.dp, StudioColors.Cyan.copy(alpha = 0.45f)),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("voice_changer_source_card"),
         ) {
             Column(
                 modifier = Modifier
@@ -2178,104 +2172,45 @@ fun VoiceTransformerScreen(
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.AutoAwesome,
-                        contentDescription = null,
-                        tint = StudioColors.Cyan,
-                    )
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = if (lang == AppLanguage.EN) {
-                                "VoxCPM2 Cloud Character Voice"
-                            } else {
-                                "تحويل الشخصية الصوتية عبر VoxCPM2 السحابي"
-                            },
-                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                            color = StudioColors.Cyan,
-                        )
-                        Text(
-                            text = if (lang == AppLanguage.EN) {
-                                "Deterministic VoxCPM2 synthesis with clean, isolated output."
-                            } else {
-                                "توليد حتمي عبر VoxCPM2 مع إخراج صوتي منفصل وواضح."
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = StudioColors.TextSecondary,
-                        )
-                    }
-                }
-
-                OutlinedTextField(
-                    value = targetText,
-                    onValueChange = { targetText = it },
-                    label = {
-                        Text(
-                            if (lang == AppLanguage.EN) {
-                                "Text for the selected character"
-                            } else {
-                                "النص المراد نطقه بالشخصية المختارة"
-                            },
-                        )
-                    },
-                    minLines = 3,
-                    maxLines = 6,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = StudioColors.Cyan,
-                        unfocusedBorderColor = StudioColors.Border,
-                        focusedTextColor = StudioColors.TextPrimary,
-                        unfocusedTextColor = StudioColors.TextPrimary,
-                    ),
-                    shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("voice_character_text_input"),
+                Text(
+                    text = if (lang == AppLanguage.EN) "Voice-to-voice conversion" else "تحويل الصوت الفعلي",
+                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                    color = StudioColors.Cyan,
                 )
-
-                uiState.voiceAiStatusNote?.takeIf { it.isNotBlank() }?.let { note ->
-                    AiStatusCard(message = note, isAmber = true)
+                Text(
+                    text = if (uiState.hasAudio) {
+                        if (lang == AppLanguage.EN) "The loaded or recorded audio is ready for conversion." else "المقطع الصوتي المحمّل أو المسجّل جاهز للتحويل."
+                    } else {
+                        if (lang == AppLanguage.EN) "Record or import an audio clip before previewing or applying a voice change." else "سجّل أو استورد مقطعاً صوتياً قبل معاينة تغيير الصوت أو تطبيقه."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = StudioColors.TextSecondary,
+                )
+                uiState.voiceAiStatusNote?.takeIf { it.isNotBlank() }?.let { status ->
+                    AiStatusCard(message = status, isAmber = true)
                 }
-
                 if (uiState.isVoiceAiConverting) {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        LinearProgressIndicator(
-                            progress = { uiState.voiceAiProgress?.coerceIn(0f, 1f) ?: 0f },
-                            color = StudioColors.Cyan,
-                            trackColor = StudioColors.BgTop,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(6.dp)
-                                .clip(CircleShape),
-                        )
-                        Text(
-                            text = "${((uiState.voiceAiProgress ?: 0f) * 100f).toInt()}%",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = StudioColors.Cyan,
-                        )
-                        val cancelAiVcInt = remember { MutableInteractionSource() }
-                        OutlinedButton(
-                            onClick = { viewModel.cancelCharacterVoiceWithVox() },
-                            interactionSource = cancelAiVcInt,
-                            border = BorderStroke(1.dp, StudioColors.RoseBright),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = StudioColors.RoseBright),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .defaultMinSize(minHeight = 48.dp)
-                                .lit(cancelAiVcInt, StudioColors.RoseBright, cornerRadius = 12.dp)
-                                .testTag("voice_ai_cancel_button"),
-                        ) {
-                            Icon(Icons.Rounded.Stop, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text(t(lang, "cancel_request"))
-                        }
+                    LinearProgressIndicator(
+                        progress = { uiState.voiceAiProgress?.coerceIn(0f, 1f) ?: 0f },
+                        color = StudioColors.Cyan,
+                        trackColor = StudioColors.BgTop,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(6.dp)
+                            .clip(CircleShape),
+                    )
+                    OutlinedButton(
+                        onClick = { viewModel.cancelActiveOnlineRequest() },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Icon(Icons.Rounded.Stop, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(t(lang, "cancel_request"))
                     }
                 }
             }
         }
+
     }
         Card(
             modifier = Modifier
@@ -2313,8 +2248,10 @@ fun VoiceTransformerScreen(
                     }
                 }
                 Button(
-                    onClick = { runVoxGeneration(true) },
-                    enabled = targetText.isNotBlank() && !uiState.isVoiceAiConverting && !uiState.isBusy,
+                    onClick = {
+                        if (uiState.isToolPreviewPlaying) viewModel.stopToolPreview() else previewSelectedVoice()
+                    },
+                    enabled = uiState.hasAudio && !uiState.isVoiceAiConverting && !uiState.isBusy,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = if (uiState.isToolPreviewPlaying) StudioColors.Amber else StudioColors.Cyan,
                         contentColor = StudioColors.BgTop,
@@ -2323,7 +2260,7 @@ fun VoiceTransformerScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .defaultMinSize(minHeight = 48.dp)
-                        .testTag("voice_ai_preview_button"),
+                        .testTag("voice_changer_preview_button"),
                 ) {
                     Icon(
                         if (uiState.isToolPreviewPlaying) Icons.Rounded.Stop else Icons.Rounded.PlayArrow,
@@ -2334,16 +2271,13 @@ fun VoiceTransformerScreen(
                         if (uiState.isToolPreviewPlaying) {
                             if (lang == AppLanguage.EN) "Stop preview" else "إيقاف المعاينة"
                         } else {
-                            if (lang == AppLanguage.EN) "Audio Preview" else "معاينة الصوت"
+                            if (lang == AppLanguage.EN) "Preview voice change" else "معاينة تغيير الصوت"
                         },
                     )
                 }
                 Button(
-                    onClick = {
-                        preferVmUndo = true
-                        runVoxGeneration(false)
-                    },
-                    enabled = targetText.isNotBlank() && !uiState.isVoiceAiConverting && !uiState.isBusy,
+                    onClick = { applySelectedVoice() },
+                    enabled = uiState.hasAudio && !uiState.isVoiceAiConverting && !uiState.isBusy,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = StudioColors.Violet,
                         contentColor = StudioColors.BgTop,
@@ -2352,11 +2286,11 @@ fun VoiceTransformerScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .defaultMinSize(minHeight = 48.dp)
-                        .testTag("voice_ai_apply_button"),
+                        .testTag("voice_changer_apply_button"),
                 ) {
                     Icon(Icons.Rounded.CheckCircle, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
-                    Text(if (lang == AppLanguage.EN) "Apply & approve" else "موافقة واعتماد")
+                    Text(if (lang == AppLanguage.EN) "Apply voice change" else "تطبيق تغيير الصوت")
                 }
             }
         }
@@ -2436,6 +2370,7 @@ private fun <T> VoiceModeDropdown(
 @Composable
 private fun VoiceProfileDropdown(
     selectedPersona: TtsVoicePersona?,
+    personas: List<TtsVoicePersona>,
     language: AppLanguage,
     onSelectPersona: (TtsVoicePersona) -> Unit,
 ) {
@@ -2464,7 +2399,7 @@ private fun VoiceProfileDropdown(
             expanded = expanded,
             onDismissRequest = { expanded = false },
         ) {
-            TTS_VOICE_PERSONAS.forEach { persona ->
+            personas.forEach { persona ->
                 DropdownMenuItem(
                     text = {
                         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -3061,7 +2996,7 @@ fun SettingsScreen(
             }
         }
 
-        SupportUpdatesQaSection(
+        SupportUpdatesSection(
             uiState = uiState,
             viewModel = viewModel,
             collapsible = true,

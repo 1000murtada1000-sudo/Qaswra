@@ -196,18 +196,12 @@ fun AiVoiceOutputPlayerCard(
     state: AiVoiceStudioUiState,
     isEnglish: Boolean,
     onPlayPause: () -> Unit,
-    onReplay: () -> Unit,
-    onStop: () -> Unit,
-    onSeekMs: (Long) -> Unit,
     onSaveWav: () -> Unit,
     onShare: () -> Unit,
     onInsertIntoStudio: () -> Unit,
 ) {
     val wavPath = state.lastOutputWavPath ?: return
     if (wavPath.isBlank()) return
-
-    val durationMs = state.lastOutputDurationMs.coerceAtLeast(1L)
-    val posMs = state.playbackPositionMs.coerceIn(0L, durationMs)
 
     Card(
         shape = RoundedCornerShape(14.dp),
@@ -221,44 +215,38 @@ fun AiVoiceOutputPlayerCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(10.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.GraphicEq,
-                        contentDescription = null,
-                        tint = StudioColors.Cyan,
+                Icon(
+                    imageVector = Icons.Rounded.GraphicEq,
+                    contentDescription = null,
+                    tint = StudioColors.Cyan,
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = if (isEnglish) "Generated Audio Output" else "النتيجة الصوتية المولّدة",
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                        color = StudioColors.TextPrimary,
                     )
-                    Column {
+                    state.lastOutputEngine?.let { engine ->
                         Text(
-                            text = if (isEnglish) "Generated Audio Output" else "النتيجة الصوتية المولّدة",
-                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                            color = StudioColors.TextPrimary,
+                            text = if (isEnglish) engine.shortTitleEn else engine.shortTitleAr,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = StudioColors.Cyan,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
-                        state.lastOutputEngine?.let { eng ->
-                            Text(
-                                text = if (isEnglish) eng.shortTitleEn else eng.shortTitleAr,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = StudioColors.Cyan,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
                     }
                 }
                 Text(
-                    text = "${formatDurationMs(posMs)} / ${formatDurationMs(durationMs)}",
+                    text = formatDurationMs(state.lastOutputDurationMs),
                     style = TelemetryTextStyle,
-                    color = StudioColors.TextPrimary,
+                    color = StudioColors.TextSecondary,
                 )
             }
 
@@ -272,75 +260,34 @@ fun AiVoiceOutputPlayerCard(
                 )
             }
 
-            Slider(
-                value = posMs.toFloat(),
-                onValueChange = { onSeekMs(it.toLong()) },
-                valueRange = 0f..durationMs.toFloat().coerceAtLeast(1f),
-                colors = SliderDefaults.colors(
-                    thumbColor = StudioColors.Cyan,
-                    activeTrackColor = StudioColors.Cyan,
-                    inactiveTrackColor = StudioColors.BgTop,
+            Button(
+                onClick = onPlayPause,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (state.isPlayingOutput) StudioColors.Amber else StudioColors.Cyan,
+                    contentColor = StudioColors.BgTop,
                 ),
+                shape = RoundedCornerShape(10.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .testTag("ai_voice_player_seek_slider"),
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                    .defaultMinSize(minHeight = 38.dp)
+                    .testTag("ai_voice_global_preview_button"),
             ) {
-                Button(
-                    onClick = onPlayPause,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = StudioColors.Cyan,
-                        contentColor = StudioColors.BgTop,
-                    ),
-                    shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier
-                        .weight(1.4f)
-                        .defaultMinSize(minHeight = 40.dp)
-                        .testTag("ai_voice_play_pause_button"),
-                ) {
-                    Icon(
-                        imageVector = if (state.isPlayingOutput) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                        contentDescription = if (state.isPlayingOutput) "Pause" else "Play",
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        text = if (state.isPlayingOutput) {
-                            if (isEnglish) "Pause" else "إيقاف مؤقت"
-                        } else {
-                            if (isEnglish) "Play" else "تشغيل"
-                        },
-                        fontWeight = FontWeight.Bold,
-                    )
-                }
-                OutlinedButton(
-                    onClick = onReplay,
-                    shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier
-                        .weight(1f)
-                        .defaultMinSize(minHeight = 40.dp)
-                        .testTag("ai_voice_replay_button"),
-                ) {
-                    Icon(Icons.Rounded.Replay, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text(if (isEnglish) "Replay" else "إعادة", maxLines = 1)
-                }
-                IconButton(
-                    onClick = onStop,
-                    modifier = Modifier
-                        .size(40.dp)
-                        .testTag("ai_voice_stop_button"),
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Stop,
-                        contentDescription = if (isEnglish) "Stop" else "إيقاف",
-                        tint = StudioColors.RoseBright,
-                    )
-                }
+                Icon(
+                    imageVector = if (state.isPlayingOutput) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = if (state.isPlayingOutput) {
+                        if (isEnglish) "Pause in global player" else "إيقاف مؤقت بالمشغل الموحد"
+                    } else {
+                        if (isEnglish) "Preview in global player" else "معاينة عبر المشغل الموحد"
+                    },
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    fontWeight = FontWeight.Bold,
+                )
             }
 
             Row(
@@ -352,22 +299,22 @@ fun AiVoiceOutputPlayerCard(
                     shape = RoundedCornerShape(10.dp),
                     modifier = Modifier
                         .weight(1f)
-                        .defaultMinSize(minHeight = 40.dp)
+                        .defaultMinSize(minHeight = 36.dp)
                         .testTag("ai_voice_save_wav_button"),
                 ) {
-                    Icon(Icons.Rounded.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Rounded.Download, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text(if (isEnglish) "Save WAV" else "حفظ", maxLines = 1)
+                    Text(if (isEnglish) "Save" else "حفظ", maxLines = 1)
                 }
                 OutlinedButton(
                     onClick = onShare,
                     shape = RoundedCornerShape(10.dp),
                     modifier = Modifier
                         .weight(1f)
-                        .defaultMinSize(minHeight = 40.dp)
+                        .defaultMinSize(minHeight = 36.dp)
                         .testTag("ai_voice_share_button"),
                 ) {
-                    Icon(Icons.Rounded.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Rounded.Share, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
                     Text(if (isEnglish) "Share" else "مشاركة", maxLines = 1)
                 }
@@ -379,17 +326,13 @@ fun AiVoiceOutputPlayerCard(
                     ),
                     shape = RoundedCornerShape(10.dp),
                     modifier = Modifier
-                        .weight(1.3f)
-                        .defaultMinSize(minHeight = 40.dp)
+                        .weight(1.2f)
+                        .defaultMinSize(minHeight = 36.dp)
                         .testTag("ai_voice_insert_studio_button"),
                 ) {
-                    Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text(
-                        text = if (isEnglish) "To Studio" else "للاستوديو",
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    Text(if (isEnglish) "To Studio" else "للاستوديو", maxLines = 1)
                 }
             }
         }

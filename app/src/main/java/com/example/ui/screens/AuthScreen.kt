@@ -232,7 +232,7 @@ fun AuthScreen(
     }
 
     fun formatGoogleAuthFailure(e: Exception): String {
-        val causeChain = generateSequence<Throwable>(e) { it.cause }
+        val causeChain = generateSequence(e) { it.cause as? Exception }
         val isNetworkError = causeChain.any {
             it is FirebaseNetworkException ||
                 (it is FirebaseAuthException && it.errorCode == "ERROR_NETWORK_REQUEST_FAILED")

@@ -1131,6 +1131,12 @@ private fun TransportSeekRow(
     } else {
         0f
     }
+    var isSeeking by remember { mutableStateOf(false) }
+    var seekFraction by remember { mutableFloatStateOf(progress) }
+    LaunchedEffect(progress) {
+        if (!isSeeking) seekFraction = progress
+    }
+    val displayedPositionMs = (seekFraction * durationMs).toLong().coerceIn(0L, durationMs)
 
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
         Row(
@@ -1139,14 +1145,21 @@ private fun TransportSeekRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(
-                text = formatDurationMs(telemetry.positionMs),
+                text = formatDurationMs(if (isSeeking) displayedPositionMs else telemetry.positionMs),
                 style = TelemetryTextStyle,
                 color = StudioColors.Cyan,
             )
 
             Slider(
-                value = progress,
-                onValueChange = onSeekFraction,
+                value = seekFraction,
+                onValueChange = {
+                    isSeeking = true
+                    seekFraction = it
+                },
+                onValueChangeFinished = {
+                    if (isSeeking) onSeekFraction(seekFraction)
+                    isSeeking = false
+                },
                 enabled = hasAudio,
                 colors = SliderDefaults.colors(
                     thumbColor = StudioColors.Cyan,

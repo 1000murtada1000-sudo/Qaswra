@@ -62,6 +62,7 @@ import com.example.audio.fx.StudioLuxuryAudioFilter
 import com.example.audio.fx.VoiceEffect
 import com.example.audio.fx.VoiceProcessor
 import com.example.audio.network.NetworkImmunityManager
+import com.example.audio.network.NetworkFetchOutcome
 import com.example.audio.processAudioFileWithFfmpeg
 import com.example.audio.processBatchItemWithDsp
 import com.example.audio.processReelsAudioTemplate
@@ -150,8 +151,6 @@ import com.example.devpanel.PaymentStatus
 import com.example.devpanel.PaymentType
 import com.example.diagnostics.AppDiagnosticEntry
 import com.example.diagnostics.AppDiagnosticLog
-import com.example.diagnostics.QaScanState
-import com.example.diagnostics.SmartQaBotEngine
 import com.example.i18n.t
 import com.example.model.AiStreamState
 import com.example.model.AppLanguage
@@ -382,7 +381,14 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     private val smartVoiceRouter = SmartVoiceRouter()
     private val voiceProcessor = VoiceProcessor()
     private var ttsPreviewTempFile: File? = null
-    private var toolPreviewTempFile: File? = null
+    private var toolPreviewBuffer: StereoAudioBuffer? = null
+    private var toolPreviewPlaybackFile: File? = null
+    private var toolPreviewFileDurationMs: Long = 0L
+    private var toolPreviewFileSampleRate: Int = 44100
+    private var toolPreviewDeleteFileOnStop: Boolean = false
+    private var toolPreviewOriginalHasAudio: Boolean? = null
+    private var toolPreviewOriginalDurationMs: Long? = null
+    private var onlinePreviewFile: File? = null
     private val speechTranscriber = StudioSpeechTranscriber(application)
 
     private val safeCoroutineHandler = CoroutineExceptionHandler { _, throwable ->
@@ -458,6 +464,10 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             _uiState.update { it.copy(homeScrollIndex = index, homeScrollOffset = offset) }
         }
     }
+    val ttsPreviewFile = ttsPreviewTempFile
+    if (ttsPreviewFile != null && aiOutputFile?.absolutePath == ttsPreviewFile.absolutePath) {
+        _uiState.update { it.copy(ttsUiState = it.ttsUiState.copy(isPreviewing = telemetry.isPlaying)) }
+    }
 
     private data class EditorSnapshot(
         val buffer: StereoAudioBuffer?,
@@ -496,7 +506,12 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     private var clipGainUnappliedDirty: Boolean = false
     @Volatile private var editorPlaybackBoundsEnabled: Boolean = false
 
+    private fun hasGlobalToolPreview(): Boolean =
+        toolPreviewBuffer != null || toolPreviewPlaybackFile != null
+
     private fun hasLoadedAudio(): Boolean {
+        if (toolPreviewBuffer != null) return true
+        if (toolPreviewPlaybackFile != null) return toolPreviewPlaybackFile?.exists() == true
         val buf = activeBuffer
         if (buf != null && buf.frameCount > 0) return true
         val file = activeSourceFile ?: return false
@@ -579,16 +594,12 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     private var cloudDraftsJob: Job? = null
     private var aiVoiceSynthJob: Job? = null
     private var aiVoiceReferenceImportJob: Job? = null
-    private var aiVoicePlaybackPollJob: Job? = null
-    private var characterVoicePreviewJob: Job? = null
     private var pendingExportResult: ExportedAudioResult? = null
     private var pendingSuggestedFileName: String? = null
     @Volatile private var defaultSaveTreeUriString: String? = null
     @Volatile private var lastNotifSyncMs: Long = 0L
     @Volatile private var lastNotifPlaying: Boolean = false
     @Volatile private var lastLivePreviewRequestMs: Long = 0L
-
-    val qaScanState: StateFlow<QaScanState> = SmartQaBotEngine.state
 
     private val cloudPresetsFlow = MutableStateFlow<List<StudioPreset>>(emptyList())
     private val cloudDraftsFlow = MutableStateFlow<List<CloudDraft>>(emptyList())
@@ -616,6 +627,29 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
 
     private val player = StudioAudioPlayer(_uiState.value.dspConfig, application) { telemetry ->
         _playbackTelemetry.value = telemetry
+        if (hasGlobalToolPreview()) {
+            _uiState.update { it.copy(isToolPreviewPlaying = telemetry.isPlaying) }
+        }
+        val onlineFile = onlinePreviewFile
+        if (
+            !telemetry.isPlaying &&
+            onlineFile != null &&
+            toolPreviewPlaybackFile?.absolutePath == onlineFile.absolutePath &&
+            telemetry.durationMs > 0L &&
+            telemetry.positionMs >= telemetry.durationMs
+        ) {
+            _uiState.update { it.copy(previewingOnlineUrl = null) }
+        }
+        val aiOutputFile = toolPreviewPlaybackFile
+        if (aiOutputFile != null && aiOutputFile.absolutePath == _aiVoiceUiState.value.lastOutputWavPath) {
+            _aiVoiceUiState.update {
+                it.copy(
+                    isPlayingOutput = telemetry.isPlaying,
+                    playbackPositionMs = telemetry.positionMs,
+                    lastOutputDurationMs = if (telemetry.durationMs > 0L) telemetry.durationMs else it.lastOutputDurationMs,
+                )
+            }
+        }
         val prevDiscrete = _uiState.value.playback
         if (prevDiscrete.isPlaying != telemetry.isPlaying || prevDiscrete.durationMs != telemetry.durationMs) {
             _uiState.update { cur ->
@@ -1188,6 +1222,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun replaceActiveSourceFile(newFile: File?) {
+        if (hasGlobalToolPreview()) stopToolPreview()
         val old = activeSourceFile
         activeSourceFile = newFile
         if (old != null && old != newFile) {
@@ -1268,6 +1303,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         recordUndo: Boolean,
         resetDspOnNewEntry: Boolean = false,
     ) {
+        if (hasGlobalToolPreview()) stopToolPreview()
         if (recordUndo && activeBuffer != null) {
             pushUndoSnapshot(debounced = false)
         } else if (!recordUndo) {
@@ -1370,7 +1406,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun syncPlayerConfig(cfg: DspConfig, holdBypass: Boolean = _uiState.value.isHoldBypassing) {
-        val effective = if (holdBypass) cfg.copy(bypassAll = true) else cfg
+        val effective = if (holdBypass || hasGlobalToolPreview()) cfg.copy(bypassAll = true) else cfg
         player.updateConfig(effective)
         if (pitchSpeedLiveModeActive) {
             player.setPitchSpeedPreview(
@@ -1582,13 +1618,56 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setHoldBypass(holding: Boolean) {
         _uiState.update { it.copy(isHoldBypassing = holding) }
-        syncPlayerConfig(_uiState.value.dspConfig, holding)
+        if (hasGlobalToolPreview()) {
+            switchToolPreviewSource(showOriginal = holding || _uiState.value.dspConfig.bypassAll)
+        } else {
+            syncPlayerConfig(_uiState.value.dspConfig, holding)
+        }
     }
 
     fun toggleBypass() {
         val next = _uiState.value.dspConfig.let { it.copy(bypassAll = !it.bypassAll) }
         _uiState.update { it.copy(dspConfig = next) }
+        if (hasGlobalToolPreview()) {
+            switchToolPreviewSource(showOriginal = next.bypassAll || _uiState.value.isHoldBypassing)
+            return
+        }
         syncPlayerConfig(next)
+    }
+
+    private fun switchToolPreviewSource(showOriginal: Boolean) {
+        if (!hasGlobalToolPreview()) return
+        if (showOriginal && activeBuffer == null && activeSourceFile?.exists() != true) {
+            postBanner(if (_uiState.value.language == AppLanguage.EN) "No original audio is available to compare." else "لا يوجد صوت أصلي متاح للمقارنة.")
+            return
+        }
+        val telemetry = _playbackTelemetry.value
+        val wasPlaying = telemetry.isPlaying
+        val positionFraction = if (telemetry.durationMs > 0L) {
+            telemetry.positionMs.toFloat() / telemetry.durationMs.toFloat()
+        } else {
+            0f
+        }
+        player.stop()
+        if (showOriginal) {
+            restoreActivePlayerSource()
+        } else if (toolPreviewBuffer != null) {
+            player.setBuffer(toolPreviewBuffer)
+        } else {
+            val previewFile = toolPreviewPlaybackFile ?: return
+            player.setSourceFile(
+                file = previewFile,
+                durationMs = toolPreviewFileDurationMs,
+                sampleRate = toolPreviewFileSampleRate,
+            )
+        }
+        if (!showOriginal) player.setPlaybackBounds(false, 0f, 1f)
+        syncPlayerConfig(_uiState.value.dspConfig)
+        player.seekToFraction(positionFraction)
+        if (wasPlaying) {
+            ExclusiveAudioController.onBeforeStudioPlayerPlay(player)
+            player.play()
+        }
     }
 
     fun updateDspConfig(debouncedUndo: Boolean = true, updater: (DspConfig) -> DspConfig) {
@@ -2720,8 +2799,18 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun toggleSmartDuckingPreviewPlayback() {
-        if (_uiState.value.isSmartMixPreviewActive && AudioPlayerManager.isPlaying("mix_preview")) {
-            stopMixPreviewPlayer()
+        val existingMixPreview = _uiState.value.previewWavPath?.let(::File)
+        if (
+            _uiState.value.isSmartMixPreviewActive &&
+            existingMixPreview != null &&
+            existingMixPreview.absolutePath == toolPreviewPlaybackFile?.absolutePath
+        ) {
+            if (_playbackTelemetry.value.isPlaying) {
+                player.pause()
+            } else {
+                ExclusiveAudioController.onBeforeStudioPlayerPlay(player)
+                player.play()
+            }
             return
         }
         val voice = activeBuffer
@@ -2773,17 +2862,19 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                 }
             }
             _uiState.update { it.copy(previewWavPath = finalFile.absolutePath, isSmartMixPreviewActive = true) }
-            AudioPlayerManager.playFile(
-                file = finalFile,
-                tag = "mix_preview",
-                onCompletion = { stopMixPreviewPlayer() },
-                onError = { stopMixPreviewPlayer() },
-            )
+            if (!startGlobalFilePreview(finalFile)) {
+                postBanner("تعذر تشغيل معاينة الدمج التلقائي")
+            }
         }
     }
 
     private fun stopMixPreviewPlayer() {
-        AudioPlayerManager.stop("mix_preview")
+        val activePreview = toolPreviewPlaybackFile
+        if (activePreview != null && activePreview.absolutePath == _uiState.value.previewWavPath) {
+            stopToolPreview()
+        } else {
+            AudioPlayerManager.stop("mix_preview")
+        }
     }
 
     fun applySmartDuckingMixToStudio() {
@@ -4308,7 +4399,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             }
             return
         }
-        if (_uiState.value.isToolPreviewPlaying && AudioPlayerManager.isPlaying("tool_preview")) {
+        if (_uiState.value.isToolPreviewPlaying && hasGlobalToolPreview()) {
             stopToolPreview()
             return
         }
@@ -4326,17 +4417,8 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                 postBanner("تعذر توليد معاينة العكس للملف الكبير")
                 return@launchSingleFlightProcessing
             }
-            toolPreviewTempFile = previewFile
-            val started = AudioPlayerManager.playFile(
-                file = previewFile,
-                tag = "tool_preview",
-                onCompletion = { stopToolPreview() },
-                onError = { stopToolPreview() },
-            )
-            if (started) {
-                _uiState.update { it.copy(isToolPreviewPlaying = true) }
-            } else {
-                stopToolPreview()
+            val started = startGlobalFilePreview(previewFile, deleteFileOnStop = true)
+            if (!started) {
                 postBanner("تعذر تشغيل المعاينة")
             }
         }
@@ -4573,7 +4655,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             }
             return
         }
-        if (_uiState.value.isToolPreviewPlaying && AudioPlayerManager.isPlaying("tool_preview")) {
+        if (_uiState.value.isToolPreviewPlaying && hasGlobalToolPreview()) {
             stopToolPreview()
             return
         }
@@ -4613,75 +4695,9 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                 postBanner("تعذر توليد معاينة صوتية للملف الكبير")
                 return@launchSingleFlightProcessing
             }
-            toolPreviewTempFile = previewFile
-            val started = AudioPlayerManager.playFile(
-                file = previewFile,
-                tag = "tool_preview",
-                onCompletion = { stopToolPreview() },
-                onError = { stopToolPreview() },
-            )
-            if (started) {
-                _uiState.update { it.copy(isToolPreviewPlaying = true) }
-            } else {
-                stopToolPreview()
+            val started = startGlobalFilePreview(previewFile, deleteFileOnStop = true)
+            if (!started) {
                 postBanner("تعذر تشغيل المعاينة")
-            }
-        }
-    }
-
-    fun previewVoiceTransformerOffline(
-        pitchSemitones: Float,
-        formantShift: Float,
-        warmthDb: Float,
-        presenceDb: Float,
-        mix: Float,
-        bassBoostDb: Float = 0f,
-        bassFreqHz: Float = 75f,
-        vibratoHz: Float = 0f,
-        vibratoDepth: Float = 0f,
-        echoDelayMs: Float = 0f,
-        echoDecay: Float = 0f,
-        dualLayerPitchSemitones: Float = 0f,
-        dualLayerFormantShift: Float = 1.0f,
-        dualLayerMix: Float = 0f,
-        acousticMode: TtsPersonaAcousticMode = TtsPersonaAcousticMode.NATURAL,
-        style: TtsDeliveryStyle = TtsDeliveryStyle.NATURAL_WARM,
-        gender: TtsGender = TtsGender.MALE,
-    ) {
-        val src = activeBuffer ?: run {
-            postBanner(t(_uiState.value.language, "no_audio_loaded"))
-            return
-        }
-        toggleToolBufferPreview("VoiceMorphPreview") {
-            val morphed = runTransformVoiceOffline(
-                source = src,
-                pitchSemitones = pitchSemitones,
-                formantShift = formantShift,
-                warmthDb = warmthDb,
-                presenceDb = presenceDb,
-                mix = mix,
-                bassBoostDb = bassBoostDb,
-                bassFreqHz = bassFreqHz,
-                vibratoHz = vibratoHz,
-                vibratoDepth = vibratoDepth,
-                echoDelayMs = echoDelayMs,
-                echoDecay = echoDecay,
-                dualLayerPitchSemitones = dualLayerPitchSemitones,
-                dualLayerFormantShift = dualLayerFormantShift,
-                dualLayerMix = dualLayerMix,
-                studioMasteringPolish = true,
-            )
-            if (acousticMode == TtsPersonaAcousticMode.NATURAL) {
-                morphed
-            } else {
-                StudioLuxuryAudioFilter.applyAcousticMastering(
-                    context = getApplication(),
-                    decodedBuffer = morphed,
-                    mode = acousticMode,
-                    style = style,
-                    gender = gender,
-                    luxuryBoost = true,
-                )
             }
         }
     }
@@ -4714,7 +4730,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         // Large disk file (>10MB) FFmpegKit preview stream
-        if (_uiState.value.isToolPreviewPlaying && AudioPlayerManager.isPlaying("tool_preview")) {
+        if (_uiState.value.isToolPreviewPlaying && hasGlobalToolPreview()) {
             stopToolPreview()
             return
         }
@@ -4766,17 +4782,11 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                     postBanner("تعذر توليد معاينة الدمج للملفات الكبيرة")
                     return@launchSingleFlightProcessing
                 }
-                toolPreviewTempFile = rendered
-                val started = AudioPlayerManager.playFile(
-                    file = rendered,
-                    tag = "tool_preview",
-                    onCompletion = { stopToolPreview() },
-                    onError = { stopToolPreview() },
-                )
+                val started = startGlobalFilePreview(rendered, deleteFileOnStop = true)
                 if (started) {
-                    _uiState.update { it.copy(isToolPreviewPlaying = true, exportProgress = 1.0f) }
+                    _uiState.update { it.copy(exportProgress = 1.0f) }
                 } else {
-                    stopToolPreview()
+                    postBanner("تعذر تشغيل معاينة الدمج")
                 }
             } finally {
                 if (del1) runCatching { f1?.delete() }
@@ -4967,12 +4977,16 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         toolLabel: String,
         computePreview: suspend () -> StereoAudioBuffer?,
     ): Job? {
-        if (_uiState.value.isToolPreviewPlaying && AudioPlayerManager.isPlaying("tool_preview")) {
+        if (
+            _uiState.value.isToolPreviewPlaying &&
+            hasGlobalToolPreview()
+        ) {
             stopToolPreview()
             return null
         }
         return viewModelScope.launch(safeCoroutineHandler) {
             stopToolPreview()
+            captureToolPreviewOriginalState()
             player.pause()
             stopMixPreviewPlayer()
             _uiState.update { it.copy(isBusy = true) }
@@ -4982,15 +4996,12 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                     postBanner("تعذر توليد معاينة صوتية لهذا التعديل")
                     return@launch
                 }
-                val file = File(getApplication<Application>().cacheDir, "tool_preview.wav")
-                withContext(Dispatchers.IO) { writeStereoWavFile(file, buf) }
-                toolPreviewTempFile = file
-                val started = AudioPlayerManager.playFile(
-                    file = file,
-                    tag = "tool_preview",
-                    onCompletion = { stopToolPreview() },
-                    onError = { stopToolPreview() },
-                )
+                toolPreviewBuffer = buf
+                syncPlayerConfig(_uiState.value.dspConfig)
+                player.setBuffer(buf)
+                player.setPlaybackBounds(false, 0f, 1f)
+                ExclusiveAudioController.onBeforeStudioPlayerPlay(player)
+                val started = player.play()
                 if (started) {
                     _uiState.update { it.copy(isToolPreviewPlaying = true) }
                 } else {
@@ -5018,15 +5029,111 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun stopToolPreview() {
-        AudioPlayerManager.stop("tool_preview")
-        runCatching { toolPreviewTempFile?.delete() }
-        toolPreviewTempFile = null
+        val activePreviewFile = toolPreviewPlaybackFile
+        val stoppingOnlinePreview = activePreviewFile != null &&
+            activePreviewFile.absolutePath == onlinePreviewFile?.absolutePath
+        val stoppingAiOutput = activePreviewFile != null &&
+            activePreviewFile.absolutePath == _aiVoiceUiState.value.lastOutputWavPath
+        val stoppingTtsPreview = activePreviewFile != null &&
+            activePreviewFile.absolutePath == ttsPreviewTempFile?.absolutePath
+        val previewFileToDelete = if (toolPreviewDeleteFileOnStop) activePreviewFile else null
+        if (hasGlobalToolPreview()) {
+            player.stop()
+            toolPreviewBuffer = null
+            toolPreviewPlaybackFile = null
+            toolPreviewFileDurationMs = 0L
+            toolPreviewFileSampleRate = 44100
+            toolPreviewDeleteFileOnStop = false
+            restoreActivePlayerSource()
+            syncPlayerConfig(_uiState.value.dspConfig)
+        }
+        val restoredHasAudio = toolPreviewOriginalHasAudio ?: hasLoadedAudio()
+        val restoredDurationMs = toolPreviewOriginalDurationMs ?: _uiState.value.durationMs
+        toolPreviewOriginalHasAudio = null
+        toolPreviewOriginalDurationMs = null
         _uiState.update {
             it.copy(
+                hasAudio = restoredHasAudio,
+                durationMs = restoredDurationMs,
                 isToolPreviewPlaying = false,
                 batchQueueState = it.batchQueueState.copy(previewingItemId = null),
             )
         }
+        if (stoppingAiOutput) {
+            _aiVoiceUiState.update { it.copy(isPlayingOutput = false, playbackPositionMs = 0L) }
+        }
+        if (stoppingTtsPreview) {
+            runCatching { ttsPreviewTempFile?.delete() }
+            ttsPreviewTempFile = null
+            _uiState.update { it.copy(ttsUiState = it.ttsUiState.copy(isPreviewing = false)) }
+        }
+        if (stoppingOnlinePreview) {
+            onlinePreviewFile = null
+            _uiState.update { it.copy(previewingOnlineUrl = null) }
+        }
+        runCatching { previewFileToDelete?.delete() }
+    }
+
+    fun previewFileInGlobalPlayer(file: File, onFailure: () -> Unit) {
+        viewModelScope.launch(safeCoroutineHandler) {
+            if (!startGlobalFilePreview(file)) {
+                onFailure()
+            }
+        }
+    }
+
+    private fun captureToolPreviewOriginalState() {
+        if (toolPreviewOriginalHasAudio == null) {
+            toolPreviewOriginalHasAudio = _uiState.value.hasAudio
+            toolPreviewOriginalDurationMs = _uiState.value.durationMs
+        }
+    }
+
+    private suspend fun startGlobalFilePreview(
+        file: File,
+        deleteFileOnStop: Boolean = false,
+    ): Boolean {
+        if (!file.exists() || file.length() <= 0L) return false
+        stopToolPreview()
+        player.pause()
+        val metadata = AudioDecoder.inspectLargeAudioStreaming(
+            file = file,
+            buckets = 1,
+            context = getApplication(),
+        ) {}
+        if (metadata == null) return false
+
+        captureToolPreviewOriginalState()
+        toolPreviewPlaybackFile = file
+        toolPreviewFileDurationMs = metadata.durationMs
+        toolPreviewFileSampleRate = metadata.sampleRate
+        toolPreviewDeleteFileOnStop = deleteFileOnStop
+        syncPlayerConfig(_uiState.value.dspConfig)
+        player.setSourceFile(file, metadata.durationMs, metadata.sampleRate)
+        player.setPlaybackBounds(false, 0f, 1f)
+        _uiState.update { it.copy(hasAudio = true) }
+        ExclusiveAudioController.onBeforeStudioPlayerPlay(player)
+        val started = player.play()
+        if (started) {
+            _uiState.update { it.copy(isToolPreviewPlaying = true) }
+        } else {
+            stopToolPreview()
+        }
+        return started
+    }
+
+    private fun restoreActivePlayerSource() {
+        val sourceBuffer = activeBuffer
+        if (sourceBuffer != null) {
+            player.setBuffer(sourceBuffer)
+        } else {
+            player.setSourceFile(
+                file = activeSourceFile,
+                durationMs = _uiState.value.durationMs,
+                sampleRate = activeSourceSampleRate,
+            )
+        }
+        player.setPlaybackBounds(editorPlaybackBoundsEnabled, 0f, 1f)
     }
 
     // Recent Edits Temporary Cache & Diagnostics Helpers
@@ -5117,7 +5224,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                     "smart_mixer" -> StudioRoute.SmartMusicMixer
                     "pitch_speed" -> StudioRoute.PitchAndSpeed
                     "voice_purifier" -> StudioRoute.VoicePurifier
-                    "voice_transformer" -> StudioRoute.VoiceTransformer
+                    "voice_transformer" -> StudioRoute.VoiceChanger
                     "echo_reverb" -> StudioRoute.EchoSpace
                     "reverse_audio" -> StudioRoute.ReverseAudio
                     "generate_silence" -> StudioRoute.GenerateSilence
@@ -5576,9 +5683,14 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun releaseTtsPreviewPlayer() {
-        AudioPlayerManager.stop("tts_preview")
-        runCatching { ttsPreviewTempFile?.delete() }
-        ttsPreviewTempFile = null
+        val ttsFile = ttsPreviewTempFile
+        if (ttsFile != null && toolPreviewPlaybackFile?.absolutePath == ttsFile.absolutePath) {
+            stopToolPreview()
+        } else {
+            AudioPlayerManager.stop("tts_preview")
+            runCatching { ttsFile?.delete() }
+            ttsPreviewTempFile = null
+        }
     }
 
     fun previewTtsSpeech(
@@ -5655,31 +5767,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                     is VoiceRouteOutcome.Success -> {
                         val synthRes = outcome.result
                         ttsPreviewTempFile = synthRes.audioFile
-                        val initiated = AudioPlayerManager.playFile(
-                            file = synthRes.audioFile,
-                            tag = "tts_preview",
-                            onCompletion = {
-                                releaseTtsPreviewPlayer()
-                                _uiState.update { it.copy(ttsUiState = it.ttsUiState.copy(isPreviewing = false)) }
-                            },
-                            onError = { errDetail ->
-                                releaseTtsPreviewPlayer()
-                                _uiState.update {
-                                    it.copy(
-                                        ttsUiState = it.ttsUiState.copy(
-                                            selectedEngine = engineMode,
-                                            isSynthesizingPreview = false,
-                                            isPreviewing = false,
-                                            errorMessage = if (lang == AppLanguage.EN) {
-                                                "Unable to play TTS preview ($errDetail)."
-                                            } else {
-                                                "تعذر تشغيل معاينة الصوت ($errDetail)."
-                                            },
-                                        ),
-                                    )
-                                }
-                            },
-                        )
+                        val initiated = startGlobalFilePreview(synthRes.audioFile, deleteFileOnStop = true)
                         if (initiated) {
                             _uiState.update {
                                 it.copy(
@@ -6110,251 +6198,6 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                 }
             }
         }
-    }
-
-    fun previewCharacterVoiceWithVox(
-        text: String,
-        language: AiVoiceLanguage,
-        dialect: AiArabicDialect,
-        englishAccent: AiEnglishAccent,
-        persona: TtsVoicePersona?,
-        acousticMode: TtsPersonaAcousticMode,
-        pitchSemitones: Float,
-        formantShift: Float,
-        warmthDb: Float,
-        presenceDb: Float,
-        styleIntensity: Float,
-    ) {
-        if (text.isBlank()) {
-            postBanner(if (_uiState.value.language == AppLanguage.EN) "Enter text to preview." else "أدخل النص لمعاينته.")
-            return
-        }
-        characterVoicePreviewJob = toggleToolBufferPreview("Vox Character Preview") {
-            _uiState.update {
-                it.copy(isVoiceAiConverting = true, voiceAiProgress = 0.02f, voiceAiStatusNote = null)
-            }
-            try {
-                synthesizeCharacterVoiceWithVox(
-                    text = text,
-                    language = language,
-                    dialect = dialect,
-                    englishAccent = englishAccent,
-                    persona = persona,
-                    acousticMode = acousticMode,
-                    pitchSemitones = pitchSemitones,
-                    formantShift = formantShift,
-                    warmthDb = warmthDb,
-                    presenceDb = presenceDb,
-                    styleIntensity = styleIntensity,
-                )
-            } catch (ce: CancellationException) {
-                throw ce
-            } catch (e: Exception) {
-                val message = e.localizedMessage ?: e.javaClass.simpleName
-                _uiState.update { it.copy(voiceAiStatusNote = message, voiceAiProgress = null) }
-                postBanner(if (_uiState.value.language == AppLanguage.EN) "VoxCPM2 preview failed: $message" else "فشلت معاينة VoxCPM2: $message")
-                null
-            } finally {
-                _uiState.update { it.copy(isVoiceAiConverting = false) }
-            }
-        }
-    }
-
-    fun cancelCharacterVoiceWithVox() {
-        characterVoicePreviewJob?.cancel()
-        characterVoicePreviewJob = null
-        activeOnlineJob?.cancel()
-        stopToolPreview()
-        _uiState.update {
-            it.copy(
-                isVoiceAiConverting = false,
-                voiceAiProgress = null,
-                voiceAiStatusNote = if (_uiState.value.language == AppLanguage.EN) {
-                    "VoxCPM2 operation canceled."
-                } else {
-                    "تم إلغاء عملية VoxCPM2."
-                },
-            )
-        }
-    }
-
-    fun applyCharacterVoiceWithVox(
-        text: String,
-        language: AiVoiceLanguage,
-        dialect: AiArabicDialect,
-        englishAccent: AiEnglishAccent,
-        persona: TtsVoicePersona?,
-        acousticMode: TtsPersonaAcousticMode,
-        pitchSemitones: Float,
-        formantShift: Float,
-        warmthDb: Float,
-        presenceDb: Float,
-        styleIntensity: Float,
-    ) {
-        if (text.isBlank()) {
-            postBanner(if (_uiState.value.language == AppLanguage.EN) "Enter text to create a voice clip." else "أدخل النص لإنشاء المقطع الصوتي.")
-            return
-        }
-        characterVoicePreviewJob?.cancel()
-        characterVoicePreviewJob = null
-        activeOnlineJob?.cancel()
-        activeOnlineJob = viewModelScope.launch(safeCoroutineHandler) {
-            stopToolPreview()
-            player.pause()
-            _uiState.update {
-                it.copy(
-                    isBusy = true,
-                    isVoiceAiConverting = true,
-                    voiceAiProgress = 0.02f,
-                    isOnlineTaskRunning = true,
-                    onlineTaskLabel = "VoxCPM2 Character Voice",
-                    voiceAiStatusNote = null,
-                )
-            }
-            try {
-                val buffer = synthesizeCharacterVoiceWithVox(
-                    text = text,
-                    language = language,
-                    dialect = dialect,
-                    englishAccent = englishAccent,
-                    persona = persona,
-                    acousticMode = acousticMode,
-                    pitchSemitones = pitchSemitones,
-                    formantShift = formantShift,
-                    warmthDb = warmthDb,
-                    presenceDb = presenceDb,
-                    styleIntensity = styleIntensity,
-                )
-                setActiveBuffer(buffer, recordUndo = activeBuffer != null)
-                _uiState.update {
-                    it.copy(
-                        voiceAiProgress = 1f,
-                        voiceAiStatusNote = if (_uiState.value.language == AppLanguage.EN) {
-                            "VoxCPM2 voice is ready in the studio."
-                        } else {
-                            "اكتمل إنشاء الصوت عبر VoxCPM2 وأصبح جاهزاً في الاستوديو."
-                        },
-                    )
-                }
-                postBanner(if (_uiState.value.language == AppLanguage.EN) "VoxCPM2 character voice added to the studio." else "تمت إضافة صوت الشخصية من VoxCPM2 إلى الاستوديو.")
-            } catch (ce: CancellationException) {
-                throw ce
-            } catch (e: Exception) {
-                val message = e.localizedMessage ?: e.javaClass.simpleName
-                _uiState.update { it.copy(voiceAiStatusNote = message, voiceAiProgress = null) }
-                postBanner(if (_uiState.value.language == AppLanguage.EN) "VoxCPM2 conversion failed: $message" else "فشل تحويل VoxCPM2: $message")
-            } finally {
-                _uiState.update {
-                    it.copy(
-                        isBusy = false,
-                        isVoiceAiConverting = false,
-                        isOnlineTaskRunning = false,
-                        onlineTaskLabel = "",
-                    )
-                }
-            }
-        }
-    }
-
-    private suspend fun synthesizeCharacterVoiceWithVox(
-        text: String,
-        language: AiVoiceLanguage,
-        dialect: AiArabicDialect,
-        englishAccent: AiEnglishAccent,
-        persona: TtsVoicePersona?,
-        acousticMode: TtsPersonaAcousticMode,
-        pitchSemitones: Float,
-        formantShift: Float,
-        warmthDb: Float,
-        presenceDb: Float,
-        styleIntensity: Float,
-    ): StereoAudioBuffer {
-        val style = persona?.defaultStyle ?: TtsDeliveryStyle.NATURAL_WARM
-        val category = when {
-            persona?.id == "child_voice" -> AiVoiceCategory.CHILD
-            persona?.gender == TtsGender.FEMALE -> AiVoiceCategory.FEMALE
-            else -> AiVoiceCategory.MALE
-        }
-        val request = AiVoiceSynthRequest(
-            engine = AiVoiceEngineKind.VOXCPM_2,
-            text = text.trim(),
-            language = language,
-            dialect = dialect,
-            englishAccent = englishAccent,
-            category = category,
-            voiceDescriptionPrompt = listOfNotNull(
-                persona?.let { if (language == AiVoiceLanguage.AR) it.descAr else it.descEn },
-                if (language == AiVoiceLanguage.AR) acousticMode.descAr else acousticMode.descEn,
-            ).joinToString(". "),
-            emotion = when (style) {
-                TtsDeliveryStyle.ENERGETIC -> AiVoiceEmotion.EXCITED
-                TtsDeliveryStyle.SAD -> AiVoiceEmotion.SAD
-                TtsDeliveryStyle.ANGRY, TtsDeliveryStyle.DRAMATIC, TtsDeliveryStyle.RADIO_ANCHOR -> AiVoiceEmotion.SERIOUS
-                TtsDeliveryStyle.STORYTELLING -> AiVoiceEmotion.CALM
-                TtsDeliveryStyle.NATURAL_WARM -> AiVoiceEmotion.NEUTRAL
-            },
-            emotionIntensity = styleIntensity.coerceIn(0f, 1f),
-            pace = AiDeliveryPace.fromSpeechRate(style.rateFactor),
-            speechRate = style.rateFactor,
-            pitchOffsetSemitones = pitchSemitones + (persona?.defaultPitchSemitones ?: 0f),
-            fixedSid = persona?.id?.hashCode()?.and(Int.MAX_VALUE) ?: 0,
-            fixedSeed = FIXED_DETERMINISTIC_SEED,
-            fixedFormantShift = (formantShift * (persona?.defaultFormantShift ?: 1f)).coerceIn(0.6f, 1.5f),
-            fixedEqLowDb = warmthDb + style.warmthDb,
-            fixedEqPresenceDb = presenceDb,
-            vocalStyle = when (style) {
-                TtsDeliveryStyle.NATURAL_WARM -> AiVocalStyle.WARM
-                TtsDeliveryStyle.ENERGETIC, TtsDeliveryStyle.ANGRY -> AiVocalStyle.ENERGETIC
-                TtsDeliveryStyle.SAD, TtsDeliveryStyle.STORYTELLING -> AiVocalStyle.STORYTELLING
-                TtsDeliveryStyle.DRAMATIC -> AiVocalStyle.DRAMATIC
-                TtsDeliveryStyle.RADIO_ANCHOR -> AiVocalStyle.NEWS_ANCHOR
-            },
-            breathCadence = when {
-                style.breathPauseMs >= 350 -> AiBreathCadence.DRAMATIC
-                style.breathPauseMs >= 280 -> AiBreathCadence.MEASURED
-                style.breathPauseMs <= 150 -> AiBreathCadence.BRISK
-                else -> AiBreathCadence.NATURAL
-            },
-            pitchContour = if (style == TtsDeliveryStyle.DRAMATIC) {
-                AiPitchContour.EXPRESSIVE_SWELL
-            } else {
-                AiPitchContour.STEADY
-            },
-            timbre = when {
-                warmthDb >= 4f -> AiVoiceTimbre.WARM
-                presenceDb >= 4f -> AiVoiceTimbre.BRIGHT
-                else -> AiVoiceTimbre.BALANCED
-            },
-            articulationClarity = (0.45f + styleIntensity.coerceIn(0f, 1f) * 0.45f).coerceIn(0f, 1f),
-        )
-        val app = getApplication<Application>()
-        val outputDir = File(app.cacheDir, "voice_transformer_vox").apply { mkdirs() }
-        val outcome = aiVoiceCoordinator.synthesizeSingle(
-            context = app,
-            request = request,
-            backendUrl = "",
-            outputDir = outputDir,
-        ) { progress, status ->
-            _uiState.update { it.copy(voiceAiProgress = progress.coerceIn(0f, 1f), voiceAiStatusNote = status) }
-        }
-        val success = outcome as? AiVoiceSynthOutcome.Success
-            ?: when (outcome) {
-                is AiVoiceSynthOutcome.Error -> throw IllegalStateException(
-                    if (language == AiVoiceLanguage.EN) outcome.messageEn else outcome.messageAr,
-                )
-                is AiVoiceSynthOutcome.ConfigurationRequired -> throw IllegalStateException(
-                    if (language == AiVoiceLanguage.EN) outcome.explanationEn else outcome.explanationAr,
-                )
-                is AiVoiceSynthOutcome.Success -> outcome
-            }
-        val outputFile = File(success.audioFilePath)
-        val buffer = withContext(Dispatchers.IO) {
-            AiVoiceAudioStitcher.readSimplePcmWav(outputFile) ?: AudioDecoder.decodeFile(outputFile)
-        }
-        return buffer?.takeIf { it.frameCount > 0 }
-            ?: throw IllegalStateException(
-                if (language == AiVoiceLanguage.EN) "VoxCPM2 returned an unreadable or empty WAV file." else "أعاد VoxCPM2 ملف WAV فارغاً أو غير قابل للقراءة.",
-            )
     }
 
     // Native Android SpeechRecognizer + Sherpa-ONNX Moonshine AR Studio
@@ -6797,41 +6640,76 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
         stopOnlineSoundPreview()
+        stopToolPreview()
         player.pause()
         stopMixPreviewPlayer()
         _uiState.update { it.copy(previewingOnlineUrl = item.streamUrl, soundSearchOfflineError = null) }
-        viewModelScope.launch(Dispatchers.IO) {
-            if (!NetworkImmunityManager.pingReachable(getApplication())) {
-                val pingOffline = OnlineGuard.offlineErrorMessage(lang)
-                _uiState.update { it.copy(soundSearchOfflineError = pingOffline) }
+        viewModelScope.launch(safeCoroutineHandler) {
+            repository.recordOnlineSoundListen(item)
+            val outcome = NetworkImmunityManager.fetchAudioWithFallback(
+                urls = listOf(item.streamUrl),
+                context = getApplication(),
+                timeoutMs = NetworkImmunityManager.DEFAULT_NETWORK_TIMEOUT_MS,
+                maxBytes = 25 * 1024 * 1024,
+                providerLabel = "OnlineSoundPreview",
+            )
+            val response = (outcome as? NetworkFetchOutcome.Success)?.value
+            if (response == null) {
+                if (outcome is NetworkFetchOutcome.Offline) {
+                    val offlineMessage = OnlineGuard.offlineErrorMessage(lang)
+                    _uiState.update { it.copy(soundSearchOfflineError = offlineMessage) }
+                    postBanner(offlineMessage)
+                } else {
+                    postBanner("تعذر تنزيل المعاينة الصوتية من الإنترنت")
+                }
                 stopOnlineSoundPreview()
-                postBanner(pingOffline)
                 return@launch
             }
-            repository.recordOnlineSoundListen(item)
-            val safeUrl = NetworkImmunityManager.enforceHttps(item.streamUrl)
-            val ok = AudioPlayerManager.playUrl(
-                url = safeUrl,
-                tag = "online_preview",
-                onPrepared = {
-                    if (_uiState.value.previewingOnlineUrl != item.streamUrl) {
-                        AudioPlayerManager.stop("online_preview")
-                    }
-                },
-                onCompletion = { stopOnlineSoundPreview() },
-                onError = {
-                    stopOnlineSoundPreview()
-                    postBanner("تعذر تشغيل المعاينة من الإنترنت")
-                },
+
+            if (_uiState.value.previewingOnlineUrl != item.streamUrl) return@launch
+
+            val extension = item.streamUrl
+                .substringBefore('?')
+                .substringAfterLast('.', "")
+                .lowercase(Locale.ROOT)
+                .takeIf { it in setOf("mp3", "wav", "m4a", "aac", "ogg", "flac") }
+                ?: "m4a"
+            val previewFile = File(
+                getApplication<Application>().cacheDir,
+                "online_preview_${UUID.randomUUID()}.$extension",
             )
-            if (!ok) {
+            try {
+                withContext(Dispatchers.IO) {
+                    previewFile.outputStream().use { it.write(response.bytes) }
+                }
+            } catch (e: CancellationException) {
+                runCatching { previewFile.delete() }
+                throw e
+            } catch (_: Exception) {
+                runCatching { previewFile.delete() }
                 stopOnlineSoundPreview()
+                postBanner("تعذر حفظ ملف المعاينة المؤقت")
+                return@launch
+            }
+
+            onlinePreviewFile = previewFile
+            if (!startGlobalFilePreview(previewFile, deleteFileOnStop = true)) {
+                runCatching { previewFile.delete() }
+                onlinePreviewFile = null
+                stopOnlineSoundPreview()
+                postBanner("تعذر تشغيل المعاينة من الإنترنت")
             }
         }
     }
 
     fun stopOnlineSoundPreview() {
-        AudioPlayerManager.stop("online_preview")
+        val file = onlinePreviewFile
+        if (file != null && toolPreviewPlaybackFile?.absolutePath == file.absolutePath) {
+            stopToolPreview()
+        } else {
+            runCatching { file?.delete() }
+            onlinePreviewFile = null
+        }
         _uiState.update { it.copy(previewingOnlineUrl = null) }
     }
 
@@ -6900,6 +6778,8 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                 isSearchingOnlineSounds = false,
                 loadingOnlineSoundId = null,
                 updateCheckLoading = false,
+                isVoiceAiConverting = false,
+                voiceAiProgress = null,
                 transcriptionState = it.transcriptionState.copy(isLoading = false),
                 searchAssistantState = it.searchAssistantState.copy(isLoading = false),
                 ttsUiState = it.ttsUiState.copy(
@@ -7076,7 +6956,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             postBanner(t(_uiState.value.language, "no_audio_loaded"))
             return
         }
-        if (_uiState.value.isToolPreviewPlaying && AudioPlayerManager.isPlaying("tool_preview")) {
+        if (_uiState.value.isToolPreviewPlaying && hasGlobalToolPreview()) {
             stopToolPreview()
             return
         }
@@ -7088,17 +6968,10 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                 postBanner("تعذر توليد معاينة فصل الصوت للملف الكبير")
                 return@launchSingleFlightProcessing
             }
-            toolPreviewTempFile = outFile
-            val started = AudioPlayerManager.playFile(
-                file = outFile,
-                tag = "tool_preview",
-                onCompletion = { stopToolPreview() },
-                onError = { stopToolPreview() },
-            )
-            if (started) {
-                _uiState.update { it.copy(isToolPreviewPlaying = true) }
-            } else {
+            val started = startGlobalFilePreview(outFile, deleteFileOnStop = true)
+            if (!started) {
                 stopToolPreview()
+                postBanner("تعذر تشغيل معاينة فصل الصوت للملف الكبير")
             }
         }
     }
@@ -7246,16 +7119,6 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         val info = _uiState.value.updateCheckResult ?: return
         AppUpdateManager.openUpdateLinkInBrowser(getApplication(), info)
     }
-
-    fun startSmartQaScan() {
-        SmartQaBotEngine.startScanWithUserConsent(getApplication())
-    }
-
-    fun stopSmartQaScan() {
-        SmartQaBotEngine.stopScanImmediately()
-    }
-
-    fun getSmartQaFullReport(): String = SmartQaBotEngine.formatFullReport(_uiState.value.language)
 
     // Batch Processing Queue (Multi-file DSP: Pitch, Speed, Filter, Normalize & Export)
     fun addBatchUris(uris: List<Uri>) {
@@ -7703,20 +7566,8 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         }
         viewModelScope.launch(safeCoroutineHandler) {
             stopToolPreview()
-            player.pause()
             stopMixPreviewPlayer()
-            val started = AudioPlayerManager.playFile(
-                file = file,
-                tag = "tool_preview",
-                onCompletion = { stopToolPreview() },
-                onError = {
-                    stopToolPreview()
-                    postBanner(
-                        if (_uiState.value.language == AppLanguage.EN) "Unable to play preview"
-                        else "تعذر تشغيل معاينة الملف الناتج",
-                    )
-                },
-            )
+            val started = startGlobalFilePreview(file)
             if (started) {
                 _uiState.update {
                     it.copy(
@@ -8634,94 +8485,31 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             postBanner("لا يوجد ملف صوتي مولّد للتشغيل بعد")
             return
         }
-        val tag = "ai_voice_preview"
-        if (AudioPlayerManager.isPlaying(tag)) {
-            AudioPlayerManager.pause(tag)
-            aiVoicePlaybackPollJob?.cancel()
-            _aiVoiceUiState.update { it.copy(isPlayingOutput = false) }
+        val file = File(path)
+        if (toolPreviewPlaybackFile?.absolutePath == file.absolutePath) {
+            if (_playbackTelemetry.value.isPlaying) {
+                player.pause()
+            } else {
+                if (_playbackTelemetry.value.positionMs >= toolPreviewFileDurationMs) {
+                    player.seekToFraction(0f)
+                }
+                ExclusiveAudioController.onBeforeStudioPlayerPlay(player)
+                if (!player.play()) postBanner("تعذر تشغيل الصوت المولّد")
+            }
             return
         }
-        if (AudioPlayerManager.isTagActive(tag)) {
-            if (AudioPlayerManager.resume(tag)) {
-                _aiVoiceUiState.update { it.copy(isPlayingOutput = true) }
-                startAiVoicePositionPolling()
-                return
+
+        viewModelScope.launch(safeCoroutineHandler) {
+            if (!startGlobalFilePreview(file)) {
+                postBanner("تعذر تشغيل الصوت المولّد")
             }
         }
-        startAiVoicePlaybackFromStart(File(path))
-    }
-
-    fun replayAiVoiceOutput() {
-        val path = _aiVoiceUiState.value.lastOutputWavPath ?: return
-        val file = File(path)
-        if (!file.exists()) return
-        AudioPlayerManager.stop("ai_voice_preview")
-        _aiVoiceUiState.update { it.copy(playbackPositionMs = 0L) }
-        startAiVoicePlaybackFromStart(file)
     }
 
     fun stopAiVoiceOutput() {
-        aiVoicePlaybackPollJob?.cancel()
-        aiVoicePlaybackPollJob = null
         AudioPlayerManager.stop("ai_voice_preview")
+        if (toolPreviewPlaybackFile != null) stopToolPreview()
         _aiVoiceUiState.update { it.copy(isPlayingOutput = false, playbackPositionMs = 0L) }
-    }
-
-    fun seekAiVoiceOutput(positionMs: Long) {
-        val clamped = positionMs.coerceIn(0L, _aiVoiceUiState.value.lastOutputDurationMs.coerceAtLeast(1L))
-        if (AudioPlayerManager.isTagActive("ai_voice_preview")) {
-            AudioPlayerManager.seekTo("ai_voice_preview", clamped.toInt())
-        }
-        _aiVoiceUiState.update { it.copy(playbackPositionMs = clamped) }
-    }
-
-    private fun startAiVoicePlaybackFromStart(file: File) {
-        val tag = "ai_voice_preview"
-        val started = AudioPlayerManager.playFile(
-            file = file,
-            tag = tag,
-            onPrepared = {
-                val dur = AudioPlayerManager.durationMs(tag)
-                _aiVoiceUiState.update {
-                    it.copy(
-                        isPlayingOutput = true,
-                        lastOutputDurationMs = if (dur > 0L) dur else it.lastOutputDurationMs,
-                    )
-                }
-                startAiVoicePositionPolling()
-            },
-            onCompletion = {
-                aiVoicePlaybackPollJob?.cancel()
-                _aiVoiceUiState.update { it.copy(isPlayingOutput = false, playbackPositionMs = 0L) }
-            },
-            onError = { err ->
-                aiVoicePlaybackPollJob?.cancel()
-                _aiVoiceUiState.update { it.copy(isPlayingOutput = false) }
-                postBanner("تعذر تشغيل الصوت المولّد: $err")
-            },
-        )
-        if (!started) {
-            _aiVoiceUiState.update { it.copy(isPlayingOutput = false) }
-        }
-    }
-
-    private fun startAiVoicePositionPolling() {
-        aiVoicePlaybackPollJob?.cancel()
-        aiVoicePlaybackPollJob = viewModelScope.launch {
-            val tag = "ai_voice_preview"
-            while (AudioPlayerManager.isTagActive(tag)) {
-                val pos = AudioPlayerManager.currentPositionMs(tag)
-                val playing = AudioPlayerManager.isPlaying(tag)
-                _aiVoiceUiState.update {
-                    it.copy(
-                        isPlayingOutput = playing,
-                        playbackPositionMs = pos,
-                    )
-                }
-                if (!playing) break
-                delay(120L)
-            }
-        }
     }
 
     fun saveAiVoiceOutputToDevice() {
@@ -8859,7 +8647,6 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         sliderDebounceJob?.cancel()
         activeOnlineJob?.cancel()
         aiVoiceSynthJob?.cancel()
-        aiVoicePlaybackPollJob?.cancel()
         cloudPresetsJob?.cancel()
         cloudDraftsJob?.cancel()
         sleepTimerJob?.cancel()

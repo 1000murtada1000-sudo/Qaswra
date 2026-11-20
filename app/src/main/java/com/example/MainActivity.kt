@@ -11,6 +11,7 @@ import android.graphics.drawable.ColorDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -162,11 +163,10 @@ import com.example.ui.screens.RingtoneMakerScreen
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.screens.SmartAssistantScreen
 import com.example.ui.screens.SmartMusicMixerScreen
-import com.example.ui.screens.SmartQaLabScreen
 import com.example.ui.screens.SpeechToTextScreen
 import com.example.ui.screens.SurroundStereoScreen
 import com.example.ui.screens.VoicePurifierScreen
-import com.example.ui.screens.VoiceTransformerScreen
+import com.example.ui.screens.VoiceChangerScreen
 import com.example.ui.theme.SonixTheme
 import com.example.ui.theme.StudioColors
 import com.example.viewmodel.StudioSideEffect
@@ -449,18 +449,34 @@ private fun SonixRootApp(
     val context = LocalContext.current
     val lang = uiState.language
     val layoutDirection = if (lang.isRtl) LayoutDirection.Rtl else LayoutDirection.Ltr
+    val signedInUid = (uiState.authSession as? AuthSession.SignedIn)?.uid
+    val firstLoginPermissions = remember { requiredFirstLoginPermissions() }
+    val allFirstLoginPermissionsGranted = remember(signedInUid) {
+        firstLoginPermissions.all { permission ->
+            ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+        }
+    }
+    var firstLoginPermissionsComplete by rememberSaveable(signedInUid) {
+        val saved = signedInUid?.let { uid ->
+            context.getSharedPreferences("sonix_permissions", Context.MODE_PRIVATE)
+                .getBoolean("first_login_complete_$uid", false)
+        } ?: false
+        mutableStateOf(signedInUid == null || saved || allFirstLoginPermissionsGranted)
+    }
+    LaunchedEffect(signedInUid, firstLoginPermissionsComplete) {
+        if (signedInUid != null && firstLoginPermissionsComplete) {
+            context.getSharedPreferences("sonix_permissions", Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean("first_login_complete_$signedInUid", true)
+                .apply()
+        }
+    }
 
     // Hoist Home LazyListState at parent composable level outside NavHost/conditionals
     // so scroll position stays intact across any tool navigation and return.
     val homeListState = rememberLazyListState()
     var sleepTimerDialogOpen by remember { mutableStateOf(false) }
-    var askedNotificationOnce by remember { mutableStateOf(false) }
-    var showNotificationPermissionRationale by remember { mutableStateOf(false) }
     var showLuxuryLaunch by rememberSaveable { mutableStateOf(true) }
-
-    val notificationPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission(),
-    ) { _ -> }
 
     val saveDocumentLauncher = rememberLauncherForActivityResult(
         contract = CreateTypedDocumentContract(),
@@ -542,8 +558,13 @@ private fun SonixRootApp(
                         viewModel.clearBanner()
                     },
                 )
+            } else if (signedInUid != null && !firstLoginPermissionsComplete) {
+                FirstLoginPermissionGateScreen(
+                    language = lang,
+                    onComplete = { firstLoginPermissionsComplete = true },
+                )
             } else {
-                val uidKey = (uiState.authSession as? AuthSession.SignedIn)?.uid ?: "guest"
+                val uidKey = signedInUid ?: "guest"
                 key(uidKey) {
                     val navController = rememberNavController()
                     val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -588,18 +609,6 @@ private fun SonixRootApp(
                                 playbackFlow = viewModel.playbackTelemetry,
                                 onPlayPause = {
                                     try {
-                                        if (!viewModel.playbackTelemetry.value.isPlaying &&
-                                            viewModel.canStartPlayback() &&
-                                            !askedNotificationOnce &&
-                                            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                                            ContextCompat.checkSelfPermission(
-                                                context,
-                                                Manifest.permission.POST_NOTIFICATIONS,
-                                            ) != PackageManager.PERMISSION_GRANTED
-                                        ) {
-                                            askedNotificationOnce = true
-                                            showNotificationPermissionRationale = true
-                                        }
                                         viewModel.togglePlayPause()
                                     } catch (e: Exception) {
                                         Log.e("MainActivity", "Play/Pause action failed safely", e)
@@ -959,8 +968,8 @@ private fun SonixRootApp(
                                     onBack = returnToHome,
                                 )
                             }
-                            composable<StudioRoute.VoiceTransformer> {
-                                VoiceTransformerScreen(
+                            composable<StudioRoute.VoiceChanger> {
+                                VoiceChangerScreen(
                                     uiState = uiState,
                                     viewModel = viewModel,
                                     onBack = returnToHome,
@@ -1083,7 +1092,7 @@ private fun SonixRootApp(
                                     onNavigateToTool = { toolId ->
                                         val dest: StudioRoute = when (toolId) {
                                             "noise_reduction" -> StudioRoute.VoicePurifier
-                                            "voice_changer" -> StudioRoute.VoiceTransformer
+                                            "voice_changer" -> StudioRoute.VoiceChanger
                                             "reels_audio_templates" -> StudioRoute.ReelsAudioTemplates
                                             "extract_video" -> StudioRoute.ExtractVideoAudio
                                             "surround_stereo" -> StudioRoute.SurroundStereo
@@ -1128,13 +1137,6 @@ private fun SonixRootApp(
                                     uiState = uiState,
                                     viewModel = viewModel,
                                     onBack = popBackOrHome,
-                                )
-                            }
-                            composable<StudioRoute.SmartQaLab> {
-                                SmartQaLabScreen(
-                                    uiState = uiState,
-                                    viewModel = viewModel,
-                                    onBack = returnToHome,
                                 )
                             }
                             composable<StudioRoute.BatchQueue> {
@@ -1263,40 +1265,6 @@ private fun SonixRootApp(
                 }
             }
 
-            if (showNotificationPermissionRationale) {
-                AlertDialog(
-                    onDismissRequest = { showNotificationPermissionRationale = false },
-                    containerColor = StudioColors.CardSurface,
-                    title = {
-                        Text(
-                            text = t(lang, "playback_notification_permission_title"),
-                            color = StudioColors.TextPrimary,
-                        )
-                    },
-                    text = {
-                        Text(
-                            text = t(lang, "playback_notification_permission_desc"),
-                            color = StudioColors.TextSecondary,
-                        )
-                    },
-                    confirmButton = {
-                        TextButton(
-                            onClick = {
-                                showNotificationPermissionRationale = false
-                                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                            },
-                        ) {
-                            Text(t(lang, "continue"), color = StudioColors.Cyan)
-                        }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { showNotificationPermissionRationale = false }) {
-                            Text(t(lang, "cancel"), color = StudioColors.TextSecondary)
-                        }
-                    },
-                )
-            }
-
             val criticalPrompt by AppDiagnosticLog.criticalRestartPrompt.collectAsStateWithLifecycle()
             criticalPrompt?.let { promptEntry ->
                 AlertDialog(
@@ -1365,6 +1333,187 @@ private fun SonixRootApp(
                 onFinished = { showLuxuryLaunch = false },
             )
         }
+    }
+}
+
+private fun requiredFirstLoginPermissions(): List<String> = buildList {
+    add(Manifest.permission.RECORD_AUDIO)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        add(Manifest.permission.READ_MEDIA_AUDIO)
+        add(Manifest.permission.POST_NOTIFICATIONS)
+    } else {
+        add(Manifest.permission.READ_EXTERNAL_STORAGE)
+    }
+}
+
+@Composable
+private fun FirstLoginPermissionGateScreen(
+    language: AppLanguage,
+    onComplete: () -> Unit,
+) {
+    val context = LocalContext.current
+    val requiredPermissions = remember { requiredFirstLoginPermissions() }
+    var requestDenied by remember { mutableStateOf(false) }
+    val isEnglish = language == AppLanguage.EN
+
+    fun allPermissionsGranted(): Boolean = requiredPermissions.all { permission ->
+        ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions(),
+    ) {
+        if (allPermissionsGranted()) {
+            onComplete()
+        } else {
+            requestDenied = true
+        }
+    }
+
+    BackHandler(enabled = true) {}
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(StudioColors.BgTop)
+            .systemBarsPadding(),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 560.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Card(
+                shape = RoundedCornerShape(22.dp),
+                colors = CardDefaults.cardColors(containerColor = StudioColors.CardSurface),
+                border = BorderStroke(1.dp, StudioColors.Cyan.copy(alpha = 0.55f)),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(
+                        text = if (isEnglish) "Required permissions" else "الأذونات المطلوبة",
+                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                        color = StudioColors.TextPrimary,
+                    )
+                    Text(
+                        text = if (isEnglish) {
+                            "To continue, allow the permissions used by recording, audio import, and processing notifications."
+                        } else {
+                            "للمتابعة، يرجى السماح بالأذونات التي يحتاجها التسجيل واستيراد الملفات الصوتية وتنبيهات اكتمال المعالجة."
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = StudioColors.TextSecondary,
+                    )
+                    PermissionReasonRow(
+                        title = if (isEnglish) "Microphone" else "الميكروفون",
+                        description = if (isEnglish) {
+                            "For live audio recording when you choose to record."
+                        } else {
+                            "للتسجيل الصوتي المباشر عند اختيارك التسجيل."
+                        },
+                    )
+                    PermissionReasonRow(
+                        title = if (isEnglish) "Audio files" else "الملفات الصوتية",
+                        description = if (isEnglish) {
+                            "To browse and import audio files you select."
+                        } else {
+                            "لتصفح واستيراد الملفات الصوتية التي تختارها."
+                        },
+                    )
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        PermissionReasonRow(
+                            title = if (isEnglish) "Notifications" else "الإشعارات",
+                            description = if (isEnglish) {
+                                "To notify you when audio processing finishes."
+                            } else {
+                                "لإعلامك عند اكتمال معالجة الصوت."
+                            },
+                        )
+                    }
+
+                    if (requestDenied) {
+                        Text(
+                            text = if (isEnglish) {
+                                "Some permissions are still unavailable. Grant them in system settings, then return and verify."
+                            } else {
+                                "ما زالت بعض الأذونات غير مفعّلة. فعّلها من إعدادات النظام ثم عُد للتحقق."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = StudioColors.Amber,
+                        )
+                        OutlinedButton(
+                            onClick = {
+                                context.startActivity(
+                                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                        data = Uri.fromParts("package", context.packageName, null)
+                                    },
+                                )
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(if (isEnglish) "Open permission settings" else "فتح إعدادات الأذونات")
+                        }
+                        TextButton(
+                            onClick = {
+                                if (allPermissionsGranted()) {
+                                    onComplete()
+                                } else {
+                                    requestDenied = true
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(if (isEnglish) "Verify permissions" else "التحقق من الأذونات")
+                        }
+                    }
+
+                    Button(
+                        onClick = {
+                            val missing = requiredPermissions.filter { permission ->
+                                ContextCompat.checkSelfPermission(context, permission) != PackageManager.PERMISSION_GRANTED
+                            }
+                            if (missing.isEmpty()) {
+                                onComplete()
+                            } else {
+                                permissionLauncher.launch(missing.toTypedArray())
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = StudioColors.Cyan,
+                            contentColor = StudioColors.BgTop,
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .defaultMinSize(minHeight = 50.dp),
+                    ) {
+                        Text(
+                            text = if (isEnglish) "Continue and grant permissions" else "المتابعة ومنح الأذونات",
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PermissionReasonRow(
+    title: String,
+    description: String,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(title, style = MaterialTheme.typography.titleSmall, color = StudioColors.Cyan)
+        Text(description, style = MaterialTheme.typography.bodySmall, color = StudioColors.TextSecondary)
     }
 }
 
