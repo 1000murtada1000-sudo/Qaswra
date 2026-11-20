@@ -111,6 +111,7 @@ import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseAuthException
+import com.google.firebase.auth.FirebaseNetworkException
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
 import kotlinx.coroutines.CancellationException
@@ -231,22 +232,15 @@ fun AuthScreen(
     }
 
     fun formatGoogleAuthFailure(e: Exception): String {
-        val raw = e.localizedMessage?.takeIf { it.isNotBlank() }
-            ?: e.message?.takeIf { it.isNotBlank() }
-            ?: e.javaClass.simpleName
-        val technicalDetail = when (e) {
-            is FirebaseAuthException -> "[${e.errorCode}] $raw"
-            is GetCredentialException -> {
-                val msg = e.errorMessage?.toString()?.takeIf { it.isNotBlank() } ?: raw
-                "[${e.type}] $msg"
-            }
-            else -> "${e.javaClass.simpleName}: $raw"
+        val causeChain = generateSequence(e) { it.cause }
+        val isNetworkError = causeChain.any {
+            it is FirebaseNetworkException ||
+                (it is FirebaseAuthException && it.errorCode == "ERROR_NETWORK_REQUEST_FAILED")
         }
-        return if (isEn) {
-            "Google Sign-In failed: $technicalDetail"
-        } else {
-            "تعذر تسجيل الدخول عبر Google: $technicalDetail"
-        }
+        return t(
+            lang,
+            if (isNetworkError) "network_error_friendly" else "google_sign_in_error_friendly",
+        )
     }
 
     fun submitEmailAuth() {
@@ -419,11 +413,7 @@ fun AuthScreen(
             val auth = runCatching { FirebaseAuth.getInstance() }.getOrElse { e ->
                 Log.e("Auth", "FirebaseAuth unavailable", e)
                 isGoogleLoading = false
-                errorMsg = if (isEn) {
-                    "Firebase Auth is not initialized: ${e.localizedMessage ?: e.javaClass.simpleName}"
-                } else {
-                    "تعذر تهيئة مصادقة Firebase: ${e.localizedMessage ?: e.javaClass.simpleName}"
-                }
+                errorMsg = t(lang, "google_sign_in_error_friendly")
                 return@AuthScreenContent
             }
 
@@ -521,11 +511,7 @@ fun AuthScreen(
                             causeEn = "Unexpected credential type: $credType",
                             errorCode = "UnexpectedCredentialType",
                         )
-                        errorMsg = if (isEn) {
-                            "Unexpected credential type returned by Google Sign-In ($credType)."
-                        } else {
-                            "تم استلام نوع بيانات اعتماد غير متوقع من Google ($credType)."
-                        }
+                        errorMsg = t(lang, "google_sign_in_error_friendly")
                     }
                 } catch (e: GetCredentialCancellationException) {
                     val cancelDetail = (e.errorMessage?.toString() ?: e.localizedMessage ?: e.message)
@@ -559,26 +545,14 @@ fun AuthScreen(
                     )
                     errorMsg = if (technicalRejection) {
                         if (isEn) {
-                            "Google Play failed account verification ($cancelDetail)." +
-                                (sha256?.let { "\nAdd this app SHA-256 in Firebase Console (${activity.packageName}):\n$it" } ?: "") +
-                                "\nAlso ensure device screen lock is enabled and Google Play Services is updated."
+                            "Google could not verify this sign-in. Update Google Play services and try again, or choose another sign-in method."
                         } else {
-                            "فشل التحقق من الحساب في Google Play ($cancelDetail)." +
-                                (sha256?.let { "\nتأكد من إضافة بصمة SHA-256 التالية في Firebase Console لحزمة ${activity.packageName}:\n$it" } ?: "") +
-                                "\nوتأكد أيضاً من تفعيل قفل شاشة الجهاز وتحديث خدمات Google Play."
+                            "تعذر التحقق من تسجيل الدخول عبر Google. حدّث خدمات Google Play وحاول مجدداً، أو اختر طريقة دخول أخرى."
                         }
                     } else if (isEn) {
-                        if (cancelDetail != null) {
-                            "Sign-in was cancelled ($cancelDetail). Please select a Google account to continue."
-                        } else {
-                            "Sign-in was cancelled. Please select a Google account to continue."
-                        }
+                        "Sign-in was cancelled. Select a Google account to continue."
                     } else {
-                        if (cancelDetail != null) {
-                            "تم إلغاء تسجيل الدخول ($cancelDetail). يرجى اختيار حساب Google للمتابعة."
-                        } else {
-                            "تم إلغاء تسجيل الدخول. يرجى اختيار حساب Google للمتابعة."
-                        }
+                        "تم إلغاء تسجيل الدخول. يرجى اختيار حساب Google للمتابعة."
                     }
                 } catch (e: NoCredentialException) {
                     val detail = e.errorMessage?.toString() ?: e.localizedMessage ?: e.message ?: e.javaClass.simpleName
@@ -593,9 +567,9 @@ fun AuthScreen(
                         throwable = e,
                     )
                     errorMsg = if (isEn) {
-                        "No Google credential available ($detail). Add a Google account in Settings or use Email / Guest mode."
+                        "No Google account is available on this device. Add one in device Settings or use Email / Guest mode."
                     } else {
-                        "لا يوجد حساب Google متاح على هذا الجهاز ($detail). أضف حساباً من إعدادات الجهاز أو ادخل بالبريد الإلكتروني أو كضيف."
+                        "لا يوجد حساب Google متاح على هذا الجهاز. أضف حساباً من إعدادات الجهاز أو استخدم البريد الإلكتروني أو المتابعة كضيف."
                     }
                 } catch (e: GetCredentialException) {
                     val detail = e.errorMessage?.toString() ?: e.localizedMessage ?: e.message ?: e.javaClass.simpleName

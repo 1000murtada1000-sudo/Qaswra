@@ -42,6 +42,7 @@ import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -61,6 +62,7 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -130,6 +132,7 @@ fun InAppAudioPickerScreen(
             ContextCompat.checkSelfPermission(context, requiredPermission) == PackageManager.PERMISSION_GRANTED,
         )
     }
+    var showAudioPermissionRationale by remember { mutableStateOf(false) }
 
     val permLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
@@ -137,6 +140,8 @@ fun InAppAudioPickerScreen(
         hasAudioPerm = granted
         if (granted) {
             viewModel.refreshDeviceAudios()
+        } else {
+            viewModel.showStatusBanner(t(lang, "audio_permission_denied"))
         }
     }
 
@@ -217,9 +222,9 @@ fun InAppAudioPickerScreen(
                     uri = uri,
                     tag = "picker_preview",
                     onCompletion = { stopPreview() },
-                    onError = { err ->
+                    onError = { _ ->
                         stopPreview()
-                        viewModel.showStatusBanner(err)
+                        viewModel.showStatusBanner(t(lang, "audio_preview_error"))
                     },
                 )
                 if (directOk) {
@@ -237,7 +242,7 @@ fun InAppAudioPickerScreen(
                     is AudioUploadOutcome.Success -> uploadOutcome.uploaded
                     is AudioUploadOutcome.Failure -> {
                         stopPreview()
-                        viewModel.showStatusBanner("تعذر نسخ ملف المعاينة: ${uploadOutcome.errorMessage}")
+                        viewModel.showStatusBanner(t(lang, "audio_preview_error"))
                         return@launch
                     }
                 }
@@ -248,20 +253,20 @@ fun InAppAudioPickerScreen(
                     file = uploaded.file,
                     tag = "picker_preview",
                     onCompletion = { stopPreview() },
-                    onError = { err ->
+                    onError = { _ ->
                         stopPreview()
-                        viewModel.showStatusBanner(err)
+                        viewModel.showStatusBanner(t(lang, "audio_preview_error"))
                     },
                 )
                 if (!ok) {
                     stopPreview()
-                    viewModel.showStatusBanner("تعذر تشغيل المعاينة")
+                    viewModel.showStatusBanner(t(lang, "audio_preview_error"))
                 }
             } catch (e: CancellationException) {
                 throw e
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 stopPreview()
-                viewModel.showStatusBanner("تعذر معاينة الملف: ${e.javaClass.simpleName}: ${e.message}")
+                viewModel.showStatusBanner(t(lang, "audio_preview_error"))
             }
         }
     }
@@ -549,7 +554,7 @@ fun InAppAudioPickerScreen(
                             )
                             val grantInteraction = remember { MutableInteractionSource() }
                             Button(
-                                onClick = { permLauncher.launch(requiredPermission) },
+                                onClick = { showAudioPermissionRationale = true },
                                 interactionSource = grantInteraction,
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = StudioColors.Cyan,
@@ -564,6 +569,41 @@ fun InAppAudioPickerScreen(
                             ) {
                                 Text(t(lang, "grant_permission"), style = MaterialTheme.typography.labelLarge)
                             }
+                        }
+
+                        if (showAudioPermissionRationale) {
+                            AlertDialog(
+                                onDismissRequest = { showAudioPermissionRationale = false },
+                                containerColor = StudioColors.CardSurface,
+                                title = {
+                                    Text(
+                                        text = t(lang, "picker_grant_audio_perm"),
+                                        color = StudioColors.TextPrimary,
+                                    )
+                                },
+                                text = {
+                                    Text(
+                                        text = t(lang, "picker_permission_rationale"),
+                                        color = StudioColors.TextSecondary,
+                                    )
+                                },
+                                confirmButton = {
+                                    TextButton(
+                                        onClick = {
+                                            showAudioPermissionRationale = false
+                                            permLauncher.launch(requiredPermission)
+                                        },
+                                    ) {
+                                        Text(t(lang, "grant_permission"), color = StudioColors.Cyan)
+                                    }
+                                },
+                                dismissButton = {
+                                    TextButton(onClick = { showAudioPermissionRationale = false }) {
+                                        Text(t(lang, "cancel"), color = StudioColors.TextSecondary)
+                                    }
+                                },
+                                modifier = Modifier.testTag("picker_audio_permission_rationale"),
+                            )
                         }
                     }
                 }

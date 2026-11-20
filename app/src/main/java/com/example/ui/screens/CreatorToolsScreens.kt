@@ -141,7 +141,7 @@ fun SpeechToTextScreen(
         if (granted) {
             viewModel.startLiveSpeechDictation()
         } else {
-            viewModel.showStatusBanner(t(lang, "mic_permission_desc"))
+            viewModel.showStatusBanner(t(lang, "mic_permission_denied"))
         }
     }
 

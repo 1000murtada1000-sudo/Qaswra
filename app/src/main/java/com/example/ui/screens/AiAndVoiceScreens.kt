@@ -3159,23 +3159,26 @@ fun SettingsScreen(
                     onClick = {
                         scope.launch {
                             deletionInProgress = true
-                            deletionMessageKey = null
-                            when (viewModel.deleteCurrentAccountAndData()) {
-                                AccountDeletionResult.Success -> {
-                                    deleteAccountDialogOpen = false
-                                    viewModel.showStatusBanner(t(lang, "account_delete_success"))
+                            try {
+                                deletionMessageKey = null
+                                when (viewModel.deleteCurrentAccountAndData()) {
+                                    AccountDeletionResult.Success -> {
+                                        deleteAccountDialogOpen = false
+                                        viewModel.showStatusBanner(t(lang, "account_delete_success"))
+                                    }
+                                    AccountDeletionResult.RecentLoginRequired -> {
+                                        deletionMessageKey = "account_delete_recent_login"
+                                    }
+                                    AccountDeletionResult.NetworkError -> {
+                                        deletionMessageKey = "account_delete_network_error"
+                                    }
+                                    AccountDeletionResult.Failed -> {
+                                        deletionMessageKey = "account_delete_failed"
+                                    }
                                 }
-                                AccountDeletionResult.RecentLoginRequired -> {
-                                    deletionMessageKey = "account_delete_recent_login"
-                                }
-                                AccountDeletionResult.NetworkError -> {
-                                    deletionMessageKey = "account_delete_network_error"
-                                }
-                                AccountDeletionResult.Failed -> {
-                                    deletionMessageKey = "account_delete_failed"
-                                }
+                            } finally {
+                                deletionInProgress = false
                             }
-                            deletionInProgress = false
                         }
                     },
                 ) {

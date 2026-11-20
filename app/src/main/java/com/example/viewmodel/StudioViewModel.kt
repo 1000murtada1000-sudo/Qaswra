@@ -1829,7 +1829,7 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setMicPermissionDeniedError() {
         _uiState.update {
-            it.copy(micPermissionError = t(it.language, "mic_permission_desc"))
+            it.copy(micPermissionError = t(it.language, "mic_permission_denied"))
         }
     }
 
