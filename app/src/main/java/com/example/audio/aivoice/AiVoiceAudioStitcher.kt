@@ -26,6 +26,7 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 data class PreparedReferenceAudio(
     val wavFile: File,
@@ -138,11 +139,12 @@ object AiVoiceAudioStitcher {
         segments: List<WavStitchSegment>,
         outFile: File,
         targetSampleRate: Int = TARGET_SAMPLE_RATE,
+        normalizeLoudness: Boolean = true,
     ): StitchedWavResult {
         require(segments.isNotEmpty()) { "At least one audio segment is required to stitch." }
         outFile.parentFile?.mkdirs()
 
-        val decodedBuffers = mutableListOf<Pair<StereoAudioBuffer, Int>>()
+        val decodedBuffers = mutableListOf<Triple<StereoAudioBuffer, Int, Float>>()
         var totalFramesLong = 0L
 
         for ((index, seg) in segments.withIndex()) {
@@ -155,7 +157,8 @@ object AiVoiceAudioStitcher {
             }
             val pauseMs = if (index < segments.lastIndex) seg.pauseAfterMs.coerceIn(0, 5000) else 0
             val pauseFrames = ((pauseMs.toLong() * targetSampleRate) / 1000L).toInt()
-            decodedBuffers.add(resampled to pauseFrames)
+            val gain = if (normalizeLoudness) calculateLoudnessGain(resampled) else 1f
+            decodedBuffers.add(Triple(resampled, pauseFrames, gain))
             totalFramesLong += resampled.frameCount + pauseFrames
         }
 
@@ -183,7 +186,7 @@ object AiVoiceAudioStitcher {
                 bytesInChunk += 4
             }
 
-            for ((buf, pauseFrames) in decodedBuffers) {
+            for ((buf, pauseFrames, gain) in decodedBuffers) {
                 val n = buf.frameCount
                 for (i in 0 until n) {
                     var env = 1f
@@ -191,7 +194,7 @@ object AiVoiceAudioStitcher {
                         if (i < fadeFrames) env = i.toFloat() / fadeFrames.toFloat()
                         else if (i >= n - fadeFrames) env = (n - 1 - i).toFloat() / fadeFrames.toFloat()
                     }
-                    writeFrame(buf.left[i] * env, buf.right[i] * env)
+                    writeFrame(buf.left[i] * env * gain, buf.right[i] * env * gain)
                 }
                 for (p in 0 until pauseFrames) {
                     writeFrame(0f, 0f)
@@ -209,6 +212,33 @@ object AiVoiceAudioStitcher {
             sampleRate = targetSampleRate,
             durationMs = durationMs,
         )
+    }
+
+    private fun calculateLoudnessGain(buffer: StereoAudioBuffer): Float {
+        val silenceThreshold = 0.01f
+        var energy = 0.0
+        var activeSamples = 0L
+        var peak = 0f
+        for (index in 0 until buffer.frameCount) {
+            val left = abs(buffer.left[index])
+            val right = abs(buffer.right[index])
+            peak = max(peak, max(left, right))
+            if (left > silenceThreshold) {
+                energy += left * left
+                activeSamples++
+            }
+            if (right > silenceThreshold) {
+                energy += right * right
+                activeSamples++
+            }
+        }
+        if (activeSamples == 0L || peak <= 0f) return 1f
+
+        val rms = sqrt(energy / activeSamples).toFloat()
+        val targetRms = 0.16f
+        val desiredGain = targetRms / rms
+        val peakLimitedGain = 0.94f / peak
+        return min(desiredGain, min(3f, peakLimitedGain)).coerceAtLeast(0f)
     }
 
     /**

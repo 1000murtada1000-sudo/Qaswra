@@ -454,7 +454,7 @@ class VoxCpm2CloudProvider : AiVoiceStudioEngine {
             (0 until params.length()).any { index ->
                 val parameter = params.optJSONObject(index) ?: return@any false
                 val key = "${parameter.optString("parameter_name")} ${parameter.optString("label")}"
-                key.contains("prompt", ignoreCase = true) && key.contains("wav", ignoreCase = true)
+                isReferenceAudioParameter(key)
             }
         } == true
         if (
@@ -725,12 +725,15 @@ class VoxCpm2CloudProvider : AiVoiceStudioEngine {
             val key = "$pName $label"
             val defaultVal = p.opt("parameter_default")
             when {
-                key.contains("target text") || pName == "text" || pName == "text_input" -> {
+                key.contains("target text") || pName in setOf("text", "text_input", "target_text") -> {
                     arr.put(cleanText)
                 }
-                key.contains("control") || key.contains("instruct") -> {
+                (key.contains("style") && key.contains("prompt")) ||
+                    key.contains("control") || key.contains("instruct") -> {
                     arr.put(instruction)
                 }
+                key.contains("prompt") && key.contains("text") -> arr.put(request.referenceTranscript.trim())
+                isReferenceAudioParameter(key) -> arr.put(referenceFileData ?: JSONObject.NULL)
                 key.contains("emotion intensity") -> arr.put(request.emotionIntensity.toDouble())
                 key.contains("emotion") -> arr.put(request.emotion.id)
                 key.contains("style") -> arr.put(request.vocalStyle.id)
@@ -756,15 +759,20 @@ class VoxCpm2CloudProvider : AiVoiceStudioEngine {
                 key.contains("pitch") -> arr.put(request.pitchOffsetSemitones.toDouble())
                 key.contains("pace") -> arr.put(request.pace.id)
                 key.contains("cfg") -> arr.put(request.cfgValue.toDouble())
-                key.contains("step") -> arr.put(request.inferenceTimesteps)
+                key.contains("step") || key.contains("timestep") -> arr.put(request.inferenceTimesteps)
                 key.contains("normalize") -> arr.put(request.normalizeAudio)
-                key.contains("prompt") && key.contains("wav") -> arr.put(referenceFileData ?: JSONObject.NULL)
-                key.contains("prompt") && key.contains("text") -> arr.put(request.referenceTranscript.trim())
                 defaultVal != null && defaultVal != JSONObject.NULL -> arr.put(defaultVal)
                 else -> arr.put(JSONObject.NULL)
             }
         }
         return arr
+    }
+
+    private fun isReferenceAudioParameter(key: String): Boolean {
+        val normalized = key.lowercase()
+        return (normalized.contains("prompt") && normalized.contains("wav")) ||
+            (normalized.contains("reference") &&
+                (normalized.contains("audio") || normalized.contains("wav")))
     }
 
     private suspend fun pollGradioEventForAudioUrl(
@@ -1239,6 +1247,7 @@ class AiVoiceStudioCoordinator(
                 segments = segments,
                 outFile = finalFile,
                 targetSampleRate = TARGET_SAMPLE_RATE,
+                normalizeLoudness = effectiveRequest.normalizeAudio,
             )
             cacheFile?.let { persistStableSynthesisCache(it, stitched.outputFile) }
             onProgress(1f, "اكتمل التوليد بنجاح")
@@ -1275,7 +1284,7 @@ class AiVoiceStudioCoordinator(
             digest.digest().joinToString("") { "%02x".format(it) }
         }.orEmpty()
         val userId = runCatching { FirebaseAuth.getInstance().currentUser?.uid }.getOrNull().orEmpty()
-        val keyData = "voxcpm-output-v2|$userId|${backendUrl.trim().trimEnd('/')}|$request|$referenceFingerprint"
+        val keyData = "voxcpm-output-v3|$userId|${backendUrl.trim().trimEnd('/')}|$request|$referenceFingerprint"
         val key = MessageDigest.getInstance("SHA-256")
             .digest(keyData.toByteArray(Charsets.UTF_8))
             .joinToString("") { "%02x".format(it) }
