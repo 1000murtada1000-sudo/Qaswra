@@ -464,10 +464,6 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
             _uiState.update { it.copy(homeScrollIndex = index, homeScrollOffset = offset) }
         }
     }
-    val ttsPreviewFile = ttsPreviewTempFile
-    if (ttsPreviewFile != null && aiOutputFile?.absolutePath == ttsPreviewFile.absolutePath) {
-        _uiState.update { it.copy(ttsUiState = it.ttsUiState.copy(isPreviewing = telemetry.isPlaying)) }
-    }
 
     private data class EditorSnapshot(
         val buffer: StereoAudioBuffer?,
@@ -649,6 +645,10 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
                     lastOutputDurationMs = if (telemetry.durationMs > 0L) telemetry.durationMs else it.lastOutputDurationMs,
                 )
             }
+        }
+        val ttsPreviewFile = ttsPreviewTempFile
+        if (ttsPreviewFile != null && aiOutputFile?.absolutePath == ttsPreviewFile.absolutePath) {
+            _uiState.update { it.copy(ttsUiState = it.ttsUiState.copy(isPreviewing = telemetry.isPlaying)) }
         }
         val prevDiscrete = _uiState.value.playback
         if (prevDiscrete.isPlaying != telemetry.isPlaying || prevDiscrete.durationMs != telemetry.durationMs) {
