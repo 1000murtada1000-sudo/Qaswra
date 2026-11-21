@@ -101,6 +101,21 @@ android {
     }
 }
 
+repositories {
+    google()
+    mavenCentral()
+    ivy {
+        name = "SherpaOnnxReleases"
+        url = uri("https://github.com/k2-fsa/sherpa-onnx/releases/download")
+        patternLayout {
+            artifactPattern("https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.12.35/[artifact]-1.12.35.[ext]")
+        }
+        metadataSources {
+            artifact()
+        }
+    }
+}
+
 dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
@@ -128,8 +143,8 @@ dependencies {
     implementation(libs.androidx.credentials.play.services)
     implementation(libs.googleid)
 
-    // Sherpa-ONNX (Kokoro / Nabra-82M / Moonshine AR + Silero VAD) AAR + Maintained FFmpegKit
-    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar", "*.jar"))))
+    // Official Sherpa-ONNX Android AAR and Maintained FFmpegKit
+    implementation("com.k2fsa:sherpa-onnx:1.12.35@aar")
     implementation("dev.ffmpegkit-maintained:ffmpeg-kit-full-gpl:8.1.9")
     implementation(libs.commons.compress)
 
