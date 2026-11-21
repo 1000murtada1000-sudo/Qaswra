@@ -197,5 +197,3 @@ dependencies {
 secrets {
     propertiesFileName = ".env"
     defaultPropertiesFileName = ".env.example"
-}
-س
