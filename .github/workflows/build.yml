@@ -55,6 +55,13 @@ jobs:
           RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
         run: gradle bundleRelease --no-daemon
+      - name: Build Signed Release APK
+        env:
+          RELEASE_KEYSTORE_PATH: ${{ github.workspace }}/release.keystore
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: gradle assembleRelease --no-daemon
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
@@ -65,3 +72,8 @@ jobs:
         with:
           name: Sonix-Release-AAB
           path: app/build/outputs/bundle/release/*.aab
+      - name: Upload Release APK (Official)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sonix-Release-APK
+          path: app/build/outputs/apk/release/*.apk
